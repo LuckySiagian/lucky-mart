@@ -27,7 +27,8 @@ COPY --from=builder /usr/share/zoneinfo/Asia/Jakarta /usr/share/zoneinfo/Asia/Ja
 ENV TZ=Asia/Jakarta
 
 COPY --from=builder /app/bin/server /app/server
-COPY --from=builder /app/.env.production /app/.env
+# Configuration comes from environment variables at runtime (see .env.example);
+# no .env file is baked into the image.
 
 EXPOSE 8080
 

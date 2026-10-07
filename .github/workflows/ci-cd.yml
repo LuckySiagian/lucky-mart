@@ -96,6 +96,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate Docker Compose Configuration
+        # Placeholder values only — real passwords are provided at deploy time.
+        env:
+          DB_PASSWORD: ci-placeholder
+          REDIS_PASSWORD: ci-placeholder
+          PGADMIN_PASSWORD: ci-placeholder
+          GRAFANA_PASSWORD: ci-placeholder
         run: |
           cd deploy/docker
           docker compose config
