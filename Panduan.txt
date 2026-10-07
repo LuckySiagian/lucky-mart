@@ -1,0 +1,64 @@
+Berikut adalah **Panduan Singkat (Cheatsheet)** langkah-langkah dan perintah terminal yang perlu dijalankan setiap kali Anda baru membuka komputer/VS Code untuk mengerjakan project ini.
+
+---
+
+### ❓ Apakah Docker Desktop Harus Dijalankan?
+
+**YA, HARUS.** 
+Karena database PostgreSQL project ini kita setting berjalan di dalam container Docker (Port `5433`). Pastikan aplikasi **Docker Desktop di Windows sudah terbuka dan berstatus *Running*** sebelum menjalankan perintah terminal.
+
+---
+
+### 📋 Urutan & Perintah Terminal Mengaktifkan Project
+
+Buka **3 Tab Terminal** di VS Code untuk masing-masing bagian:
+
+#### 🟢 TAB TERMINAL 1: Database & Backend API (Folder Root)
+
+1. **Nyalakan Database PostgreSQL:**
+   ```powershell
+   docker-compose up -d postgres
+   ```
+2. **Jalankan Backend API (Go):**
+   ```powershell
+   go run cmd/api/main.go
+   ```
+   *(Atau bisa menggunakan perintah singkat: `make run`)*
+
+---
+
+#### 🔵 TAB TERMINAL 2: Customer Web (Website Pembeli)
+
+1. Masuk ke folder `customer-web`:
+   ```powershell
+   cd customer-web
+   ```
+2. Jalankan server dev:
+   ```powershell
+   npm run dev
+   ```
+
+---
+
+#### 🟠 TAB TERMINAL 3: Admin Dashboard (Website Pengelola/Admin)
+
+1. Masuk ke folder `admin-dashboard`:
+   ```powershell
+   cd admin-dashboard
+   ```
+2. Jalankan server dev:
+   ```powershell
+   npm run dev
+   ```
+
+---
+
+### 🌐 Ringkasan URL Aplikasi Saat Aktif
+
+| Layanan / Portal | Perintah Running | URL / Alamat Akses |
+| :--- | :--- | :--- |
+| **Database PostgreSQL** | `docker-compose up -d postgres` | Port `5433` (pgAdmin: Server `sembako`) |
+| **Backend API (Go)** | `go run cmd/api/main.go` | `http://localhost:8080` |
+| **Swagger API Docs** | *(Otomatis aktif)* | `http://localhost:8080/swagger/index.html` |
+| **Customer Web** | `npm run dev` (di `customer-web`) | `http://localhost:5173` |
+| **Admin Dashboard** | `npm run dev` (di `admin-dashboard`) | `http://localhost:5174` |

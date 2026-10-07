@@ -1,0 +1,101 @@
+name: Sembako Enterprise CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  # ==========================================
+  # JOB 1: Backend Go Lint, Test & Build
+  # ==========================================
+  backend-ci:
+    name: Backend Go CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Download Dependencies
+        run: go mod download
+
+      - name: Run Go Vet & Code Checks
+        run: go vet ./...
+
+      - name: Run Unit & Integration Tests
+        run: go test -v -cover ./...
+
+      - name: Build Go Binary
+        run: go build -o bin/server ./cmd/api
+
+  # ==========================================
+  # JOB 2: Admin Dashboard React CI
+  # ==========================================
+  admin-dashboard-ci:
+    name: Admin Dashboard React CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: |
+          cd admin-dashboard
+          npm ci
+
+      - name: Build React Admin Dashboard
+        run: |
+          cd admin-dashboard
+          npm run build
+
+  # ==========================================
+  # JOB 3: Customer Web React CI
+  # ==========================================
+  customer-web-ci:
+    name: Customer Web React CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: |
+          cd customer-web
+          npm ci
+
+      - name: Build React Customer Web
+        run: |
+          cd customer-web
+          npm run build
+
+  # ==========================================
+  # JOB 4: Docker Container Build Check
+  # ==========================================
+  docker-build:
+    name: Docker Build Validation
+    needs: [backend-ci, admin-dashboard-ci, customer-web-ci]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose Configuration
+        run: |
+          cd deploy/docker
+          docker compose config

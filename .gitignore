@@ -1,0 +1,25 @@
+# Environment files with real credentials (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules/
+dist/
+bin/
+tmp/
+*.exe
+/main
+/server
+coverage/
+
+# Runtime uploads (keep the folder)
+uploads/*
+!uploads/.gitkeep
+
+# Logs, OS and editor files
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
