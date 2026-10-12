@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { MainLayout } from '../layouts/MainLayout';
-import { ProtectedRoute } from '../layouts/ProtectedRoute';
+import { ProtectedRoute, homeFor } from '../layouts/ProtectedRoute';
+import { useAuthStore } from '../store/useAuthStore';
 import { LoginPage } from '../features/auth/LoginPage';
 import { OverviewPage } from '../features/dashboard/OverviewPage';
 import { ProductListPage } from '../features/products/ProductListPage';
@@ -15,38 +16,49 @@ import { NotificationPage } from '../features/notifications/NotificationPage';
 import { UserListPage } from '../features/users/UserListPage';
 import { AuditLogPage } from '../features/audit/AuditLogPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
+import type { Role } from '../types';
+
+const WAREHOUSE: Role[] = ['SUPER_ADMIN', 'STORE_MANAGER', 'WAREHOUSE_STAFF'];
+const MANAGERS: Role[] = ['SUPER_ADMIN', 'STORE_MANAGER'];
+
+const Home = () => <Navigate to={homeFor(useAuthStore.getState().user?.role)} replace />;
 
 export const router = createBrowserRouter([
-  {
-    path: '/login',
-    element: <LoginPage />,
-  },
+  { path: '/login', element: <LoginPage /> },
   {
     element: <ProtectedRoute />,
     children: [
       {
         element: <MainLayout />,
         children: [
-          { path: '/', element: <Navigate to="/dashboard" replace /> },
-          { path: '/dashboard', element: <OverviewPage /> },
-          { path: '/products', element: <ProductListPage /> },
-          { path: '/categories', element: <CategoryListPage /> },
-          { path: '/inventory', element: <InventoryPage /> },
-          { path: '/stock-movements', element: <StockMovementPage /> },
+          { path: '/', element: <Home /> },
+          // All staff, including couriers
           { path: '/orders', element: <OrderListPage /> },
-          { path: '/payments', element: <PaymentListPage /> },
-          { path: '/credit-ledgers', element: <CreditLedgerPage /> },
           { path: '/shipping', element: <ShipmentListPage /> },
           { path: '/notifications', element: <NotificationPage /> },
-          { path: '/events', element: <AuditLogPage /> },
-          { path: '/users', element: <UserListPage /> },
           { path: '/settings', element: <SettingsPage /> },
+          {
+            element: <ProtectedRoute allowedRoles={WAREHOUSE} />,
+            children: [
+              { path: '/dashboard', element: <OverviewPage /> },
+              { path: '/products', element: <ProductListPage /> },
+              { path: '/categories', element: <CategoryListPage /> },
+              { path: '/inventory', element: <InventoryPage /> },
+              { path: '/stock-movements', element: <StockMovementPage /> },
+            ],
+          },
+          {
+            element: <ProtectedRoute allowedRoles={MANAGERS} />,
+            children: [
+              { path: '/payments', element: <PaymentListPage /> },
+              { path: '/credit-ledgers', element: <CreditLedgerPage /> },
+              { path: '/users', element: <UserListPage /> },
+              { path: '/events', element: <AuditLogPage /> },
+            ],
+          },
         ],
       },
     ],
   },
-  {
-    path: '*',
-    element: <Navigate to="/dashboard" replace />,
-  },
+  { path: '*', element: <Home /> },
 ]);

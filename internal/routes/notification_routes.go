@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"backend-sembako/internal/constants"
 	"backend-sembako/internal/handler"
 	"backend-sembako/internal/middleware"
 	"backend-sembako/pkg/jwt"
@@ -21,6 +20,7 @@ func RegisterNotificationRoutes(
 	notifications.Use(middleware.JWTAuth(jwtService))
 	{
 		notifications.GET("", notifHandler.GetNotifications)
+		notifications.GET("/unread-count", notifHandler.GetUnreadCount)
 		notifications.PATCH("/read-all", notifHandler.MarkAllAsRead)
 		notifications.GET("/:id", notifHandler.GetNotificationByID)
 		notifications.PATCH("/:id/read", notifHandler.MarkAsRead)
@@ -30,7 +30,7 @@ func RegisterNotificationRoutes(
 	// Templates (Super Admin Protected)
 	templates := r.Group("/notification-templates")
 	templates.Use(middleware.JWTAuth(jwtService))
-	templates.Use(middleware.RequireRoles(constants.RoleSuperAdmin, constants.RoleStoreManager))
+	templates.Use(middleware.RequireRoles(managerRoles...))
 	{
 		templates.GET("", tmplHandler.GetTemplates)
 		templates.POST("", tmplHandler.CreateTemplate)
@@ -41,7 +41,7 @@ func RegisterNotificationRoutes(
 	// Domain Events (Admin Protected)
 	events := r.Group("/events")
 	events.Use(middleware.JWTAuth(jwtService))
-	events.Use(middleware.RequireRoles(constants.RoleSuperAdmin, constants.RoleStoreManager))
+	events.Use(middleware.RequireRoles(managerRoles...))
 	{
 		events.GET("", eventHandler.GetEvents)
 		events.GET("/:id", eventHandler.GetEventByID)

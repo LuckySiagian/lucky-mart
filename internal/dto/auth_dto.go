@@ -47,10 +47,10 @@ type VerifyEmailDTO struct {
 }
 
 type AuthResponseDTO struct {
-	AccessToken  string             `json:"access_token"`
-	RefreshToken string             `json:"refresh_token"`
-	TokenType    string             `json:"token_type"`
-	ExpiresIn    int64              `json:"expires_in"`
+	AccessToken  string              `json:"access_token"`
+	RefreshToken string              `json:"refresh_token"`
+	TokenType    string              `json:"token_type"`
+	ExpiresIn    int64               `json:"expires_in"`
 	User         UserProfileResponse `json:"user"`
 }
 
@@ -64,5 +64,6 @@ type UserProfileResponse struct {
 	IsEmailVerified bool               `json:"is_email_verified"`
 	AvatarURL       *string            `json:"avatar_url,omitempty"`
 	LastLoginAt     *time.Time         `json:"last_login_at,omitempty"`
+	CreatedAt       time.Time          `json:"created_at"`
 	B2BProfile      *B2BProfileDTO     `json:"b2b_profile,omitempty"`
 }

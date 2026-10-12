@@ -65,7 +65,6 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	shipmentRepo := repositories.NewShipmentRepository(db)
 	paymentRepo := repositories.NewPaymentRepository(db)
 	paymentMethodRepo := repositories.NewPaymentMethodRepository(db)
-	paymentTxRepo := repositories.NewPaymentTransactionRepository(db)
 	paymentLogRepo := repositories.NewPaymentLogRepository(db)
 	creditLedgerRepo := repositories.NewCreditLedgerRepository(db)
 	creditPayRepo := repositories.NewCreditPaymentRepository(db)
@@ -76,17 +75,17 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 
 	// Initialize Services
 	healthService := services.NewHealthService(db)
-	authService := services.NewAuthService(userRepo, b2bProfileRepo, refreshTokenRepo, loginHistoryRepo, jwtService)
-	userService := services.NewUserService(userRepo)
+	authService := services.NewAuthService(userRepo, b2bProfileRepo, refreshTokenRepo, loginHistoryRepo, jwtService, cfg.JWT.RefreshTTL, eventBus)
+	userService := services.NewUserService(db, userRepo, b2bProfileRepo, refreshTokenRepo, eventBus)
 	productService := services.NewProductService(db, productRepo, categoryRepo, inventoryRepo, stockMoveRepo)
 	inventoryService := services.NewInventoryService(db, inventoryRepo, stockMoveRepo)
-	cartService := services.NewCartService(db, cartRepo, cartItemRepo, productRepo)
-	orderService := services.NewOrderService(db, orderRepo, invoiceRepo, cartRepo, cartItemRepo, productRepo, inventoryRepo, stockMoveRepo, b2bProfileRepo)
+	cartService := services.NewCartService(db, cartRepo, cartItemRepo, productRepo, methodRepo, rateRepo)
+	orderService := services.NewOrderService(db, orderRepo, invoiceRepo, cartRepo, b2bProfileRepo, addressRepo, paymentRepo, paymentMethodRepo, creditLedgerRepo, methodRepo, rateRepo, eventBus)
 	addressService := services.NewAddressService(addressRepo)
-	shippingService := services.NewShippingService(db, courierRepo, methodRepo, rateRepo, shipmentRepo, orderRepo)
-	paymentService := services.NewPaymentService(db, paymentRepo, paymentMethodRepo, invoiceRepo, orderRepo, paymentTxRepo, paymentLogRepo, creditLedgerRepo, creditPayRepo)
+	shippingService := services.NewShippingService(db, courierRepo, methodRepo, rateRepo, shipmentRepo, orderRepo, eventBus)
+	paymentService := services.NewPaymentService(db, paymentRepo, paymentMethodRepo, invoiceRepo, orderRepo, paymentLogRepo, eventBus)
 	paymentMethodService := services.NewPaymentMethodService(paymentMethodRepo)
-	creditLedgerService := services.NewCreditLedgerService(db, creditLedgerRepo, creditPayRepo)
+	creditLedgerService := services.NewCreditLedgerService(db, creditLedgerRepo, creditPayRepo, userRepo, eventBus)
 	notificationService := services.NewNotificationService(db, notificationRepo, notificationLogRepo)
 	templateService := services.NewNotificationTemplateService(templateRepo)
 	eventListenerService := services.NewEventListenerService(db, eventLogRepo, templateRepo, notificationRepo, notificationLogRepo)
@@ -110,6 +109,7 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	notificationHandler := handler.NewNotificationHandler(notificationService)
 	templateHandler := handler.NewNotificationTemplateHandler(templateService)
 	eventHandler := handler.NewEventHandlerController(eventListenerService)
+	dashboardHandler := handler.NewDashboardHandler(services.NewDashboardService(db))
 
 	// Swagger Endpoint
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -132,6 +132,10 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		RegisterShippingRoutes(v1, shippingHandler, jwtService)
 		RegisterPaymentRoutes(v1, paymentHandler, paymentMethodHandler, creditLedgerHandler, jwtService)
 		RegisterNotificationRoutes(v1, notificationHandler, templateHandler, eventHandler, jwtService)
+
+		dashboard := v1.Group("/admin/dashboard")
+		dashboard.Use(middleware.JWTAuth(jwtService), middleware.RequireRoles(warehouseRole...))
+		dashboard.GET("", dashboardHandler.GetStats)
 	}
 
 	return r

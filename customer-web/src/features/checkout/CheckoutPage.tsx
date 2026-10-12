@@ -1,266 +1,342 @@
-import React, { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { cartService, orderService, addressService, paymentService } from '../../services/apiServices';
-import { useCartStore } from '../../store/useCartStore';
-import { formatCurrency } from '../../lib/utils';
-import { MapPin, CreditCard, ShoppingBag, CheckCircle2, ArrowRight, Package, Truck, ShieldCheck } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { AlertTriangle, CheckCircle2, CreditCard, Loader2, MapPin, Package, Store, Truck } from 'lucide-react';
+import { addressService, cartService, creditService, orderService, paymentService, shippingService, type DeliveryType } from '../../services/apiServices';
+import { useCartStore } from '../../store/useCartStore';
+import { useAuthStore } from '../../store/useAuthStore';
+import { Field, Panel, inputClass } from '../../components/common/Badge';
+import { formatCurrency, getErrorMessage, isPhone } from '../../lib/utils';
+import type { Address, CheckoutSummary, CreditLedger, PaymentMethod, ShippingMethod } from '../../types';
+
+const NEW_ADDRESS = 'new';
 
 export const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
-  const { items: storeItems, selectedItemIdsForCheckout, removeMultipleItems, clearCart, setSelectedForCheckout } = useCartStore();
-  const [summary, setSummary] = useState<any>(null);
-  const [addresses, setAddresses] = useState<any[]>([]);
-  const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
+  const user = useAuthStore((s) => s.user);
+  const { selectedIds, setSelected, refresh: refreshCart } = useCartStore();
+
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [payments, setPayments] = useState<PaymentMethod[]>([]);
+  const [shippings, setShippings] = useState<ShippingMethod[]>([]);
+  const [credit, setCredit] = useState<CreditLedger | null>(null);
+  const [summary, setSummary] = useState<CheckoutSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('COD');
-  const [recipientName, setRecipientName] = useState('Budi Santoso');
-  const [phone, setPhone] = useState('081234567890');
-  const [fullAddress, setFullAddress] = useState('Jl. Raya Cengkareng No. 45');
-  const [city, setCity] = useState('Jakarta Barat');
-  const [postalCode, setPostalCode] = useState('11730');
+  const [deliveryType, setDeliveryType] = useState<DeliveryType>('DELIVERY');
+  const [addressId, setAddressId] = useState<string>(NEW_ADDRESS);
+  const [newAddr, setNewAddr] = useState({
+    title: 'Rumah',
+    recipient_name: user?.full_name || '',
+    phone: user?.phone_number || '',
+    full_address: '',
+    city: '',
+    province: '',
+    postal_code: '',
+  });
+  const [saveAddress, setSaveAddress] = useState(true);
+  const [shippingId, setShippingId] = useState('');
+  const [paymentCode, setPaymentCode] = useState('');
+  const [notes, setNotes] = useState('');
+  const placedRef = useRef(false);
+
+  const isApprovedB2B = user?.role === 'B2B_CUSTOMER' && user.b2b_profile?.verification_status === 'APPROVED';
 
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const [sumRes, addrRes, payRes] = await Promise.all([
-          cartService.getCheckoutSummary(),
-          addressService.getAddresses(),
-          paymentService.getPaymentMethods(),
-        ]);
-
-        setSummary(sumRes.data || null);
-        setAddresses(addrRes.data || []);
-        setPaymentMethods(payRes.data || []);
-
-        if (addrRes.data && addrRes.data.length > 0) {
-          const def = addrRes.data.find((a: any) => a.is_default) || addrRes.data[0];
-          setRecipientName(def.recipient_name);
-          setPhone(def.phone);
-          setFullAddress(def.full_address);
-          setCity(def.city);
-          setPostalCode(def.postal_code);
-        }
-      } catch (e) {
-        // Fallback display
-      } finally {
-        setLoading(false);
+    (async () => {
+      const [addrRes, payRes, shipRes, creditRes] = await Promise.allSettled([
+        addressService.getAddresses(),
+        paymentService.getMethods(),
+        shippingService.getMethods(),
+        isApprovedB2B ? creditService.getMine() : Promise.reject(new Error('not b2b')),
+      ]);
+      if (addrRes.status === 'fulfilled') {
+        setAddresses(addrRes.value);
+        const def = addrRes.value.find((a) => a.is_default) || addrRes.value[0];
+        if (def) setAddressId(def.id);
       }
-    };
-    fetchData();
-  }, []);
+      if (payRes.status === 'fulfilled') {
+        const usable = payRes.value.filter((m) => m.type !== 'B2B_CREDIT' || isApprovedB2B);
+        setPayments(usable);
+        setPaymentCode(usable[0]?.code || '');
+      }
+      if (shipRes.status === 'fulfilled') {
+        setShippings(shipRes.value);
+        setShippingId(shipRes.value[0]?.id || '');
+      }
+      if (creditRes.status === 'fulfilled') setCredit(creditRes.value);
+      setLoading(false);
+    })();
+  }, [isApprovedB2B]);
 
-  const handlePlaceOrder = async () => {
+  const pickup = deliveryType === 'PICKUP';
+  const selectedAddress = addresses.find((a) => a.id === addressId);
+  const city = selectedAddress ? selectedAddress.city : newAddr.city;
+
+  // Ask the server for the real totals whenever the selection, courier or city changes.
+  useEffect(() => {
+    if (selectedIds.length === 0) return;
+    const t = setTimeout(() => {
+      cartService
+        .checkoutSummary({
+          cart_item_ids: selectedIds,
+          delivery_type: deliveryType,
+          shipping_method_id: pickup ? undefined : shippingId || undefined,
+          city: pickup ? undefined : city.trim() || undefined,
+        })
+        .then(setSummary)
+        .catch((err) => toast.error(getErrorMessage(err)));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [selectedIds, shippingId, city, deliveryType, pickup]);
+
+  const payment = payments.find((p) => p.code === paymentCode);
+  const total = summary?.grand_total_amount ?? 0;
+  const creditShort = payment?.type === 'B2B_CREDIT' && credit && credit.remaining_credit < total;
+
+  const addressError = useMemo(() => {
+    if (pickup || addressId !== NEW_ADDRESS) return null;
+    if (newAddr.recipient_name.trim().length < 3) return 'Isi nama penerima.';
+    if (!isPhone(newAddr.phone)) return 'Nomor HP penerima tidak valid (contoh: 081234567890).';
+    if (!newAddr.full_address.trim()) return 'Isi alamat lengkap.';
+    if (!newAddr.city.trim()) return 'Isi kota / kabupaten.';
+    if (saveAddress && (!newAddr.province.trim() || !newAddr.postal_code.trim())) return 'Isi provinsi dan kode pos untuk menyimpan alamat.';
+    return null;
+  }, [pickup, addressId, newAddr, saveAddress]);
+
+  // Nothing selected (e.g. page opened directly): go back to the cart. Not
+  // after a successful order, which navigates to the order page itself.
+  if (selectedIds.length === 0 && !placedRef.current) return <Navigate to="/cart" replace />;
+
+  const placeOrder = async () => {
+    if (addressError) return toast.error(addressError);
+    if (!payment) return toast.error('Pilih metode pembayaran.');
+    if (!summary?.can_proceed_to_order) return toast.error(summary?.validation_errors?.[0] || 'Pesanan belum bisa diproses.');
+
     setSubmitting(true);
     try {
-      const orderPayload = {
-        payment_method: selectedPaymentMethod,
-        recipient_name: recipientName,
-        phone: phone,
-        full_address: fullAddress,
-        city: city,
-        postal_code: postalCode,
-      };
-
-      await orderService.createOrder(orderPayload);
-      if (selectedItemIdsForCheckout && selectedItemIdsForCheckout.length > 0) {
-        removeMultipleItems(selectedItemIdsForCheckout);
-        setSelectedForCheckout([]);
-      } else {
-        clearCart();
+      let useAddressId = addressId !== NEW_ADDRESS ? addressId : undefined;
+      if (!pickup && !useAddressId && saveAddress) {
+        const saved = await addressService.createAddress({ ...newAddr, is_default: addresses.length === 0 });
+        useAddressId = saved.id;
       }
-      toast.success('Pesanan berhasil dibuat! Stok dikunci secara otomatis.');
-      navigate('/orders');
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Gagal membuat pesanan. Silakan periksa kembali.');
+      const order = await orderService.createOrder({
+        payment_method: payment.code,
+        delivery_type: deliveryType,
+        cart_item_ids: selectedIds,
+        shipping_method_id: pickup ? undefined : shippingId || undefined,
+        notes: notes.trim() || undefined,
+        ...(pickup
+          ? {}
+          : useAddressId
+          ? { address_id: useAddressId }
+          : {
+              recipient_name: newAddr.recipient_name.trim(),
+              phone: newAddr.phone.trim(),
+              full_address: newAddr.full_address.trim(),
+              city: newAddr.city.trim(),
+              postal_code: newAddr.postal_code.trim(),
+            }),
+      });
+      placedRef.current = true;
+      toast.success('Pesanan berhasil dibuat!');
+      navigate(`/orders/${order.id}`, { replace: true });
+      setSelected([]);
+      refreshCart().catch(() => undefined);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Gagal membuat pesanan.'));
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Extract ordered items list from summary or Zustand store, filtered by user selection
-  const rawItems = (summary?.items && summary.items.length > 0) ? summary.items : storeItems;
-  const displayItems = (selectedItemIdsForCheckout && selectedItemIdsForCheckout.length > 0)
-    ? rawItems.filter((i: any) => selectedItemIdsForCheckout.includes(i.id))
-    : rawItems;
-  const subtotalAmount = displayItems.reduce((acc: number, i: any) => acc + (i.subtotal || (i.unit_price * (i.quantity || 1))), 0);
-  const shippingFee = summary?.estimated_shipping_fee || 15000;
-  const grandTotalAmount = subtotalAmount + shippingFee;
-  const totalItemQuantity = displayItems.reduce((acc: number, i: any) => acc + (i.quantity || 1), 0);
+  if (loading) {
+    return (
+      <div className="flex justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-primary-600" />
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      <h1 className="text-2xl font-black text-slate-900 dark:text-white flex items-center space-x-3">
-        <CheckCircle2 className="h-7 w-7 text-primary-600" />
-        <span>Konfirmasi Checkout Pesanan Sembako</span>
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+      <h1 className="flex items-center gap-3 text-2xl font-black text-slate-900 dark:text-white">
+        <CheckCircle2 className="h-7 w-7 text-primary-600" /> Checkout
       </h1>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Form Column */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Section 1: Daftar Barang yang Dipesan */}
-          <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-4 shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center space-x-2">
-                <ShoppingBag className="h-5 w-5 text-primary-600" />
-                <span>Rincian Barang yang Dipesan ({displayItems.length} Produk)</span>
-              </h3>
-              <Link to="/cart" className="text-xs font-bold text-primary-600 hover:underline">
-                Ubah di Keranjang
-              </Link>
-            </div>
-
-            {displayItems.length === 0 ? (
-              <div className="text-center py-6 text-slate-400 text-sm">
-                Belum ada produk terpilih untuk di-checkout.
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100 dark:divide-slate-800 space-y-3">
-                {displayItems.map((item: any, idx: number) => (
-                  <div key={item.id || idx} className="pt-3 first:pt-0 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                    <div className="flex items-center space-x-4">
-                      <div className="h-14 w-14 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center font-bold text-slate-400 flex-shrink-0 text-xs">
-                        {item.image_url ? (
-                          <img src={item.image_url} alt={item.product_name} className="h-14 w-14 object-cover rounded-2xl" />
-                        ) : (
-                          <Package className="h-6 w-6 text-slate-400" />
-                        )}
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-sm text-slate-900 dark:text-white">{item.product_name}</h4>
-                        <div className="flex items-center space-x-3 text-xs text-slate-500 mt-0.5">
-                          <span>Satuan: <b className="text-slate-700 dark:text-slate-300">{item.unit_name || 'Pcs'}</b></span>
-                          <span>•</span>
-                          <span>Harga Satuan: <b className="text-slate-700 dark:text-slate-300">{formatCurrency(item.unit_price)}</b></span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto space-x-6 border-t sm:border-t-0 border-slate-100 dark:border-slate-800 pt-2 sm:pt-0">
-                      <div className="inline-flex items-center px-3 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-extrabold text-slate-800 dark:text-slate-200">
-                        {item.quantity} {item.unit_name || 'Pcs'}
-                      </div>
-                      <div className="text-right">
-                        <span className="text-[10px] text-slate-400 block">Subtotal Item</span>
-                        <span className="font-black text-sm text-primary-600">{formatCurrency(item.subtotal || (item.unit_price * item.quantity))}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Section 2: Alamat Pengiriman */}
-          <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-4 shadow-sm">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center space-x-2">
-              <MapPin className="h-5 w-5 text-primary-600" />
-              <span>Alamat Pengiriman Sembako</span>
-            </h3>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Nama Penerima</label>
-                <input
-                  type="text"
-                  value={recipientName}
-                  onChange={(e) => setRecipientName(e.target.value)}
-                  className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 border-0 px-4 py-2.5 text-sm text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Nomor Telepon</label>
-                <input
-                  type="text"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 border-0 px-4 py-2.5 text-sm text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-primary-500"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Alamat Lengkap</label>
-              <textarea
-                value={fullAddress}
-                onChange={(e) => setFullAddress(e.target.value)}
-                rows={2}
-                className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 border-0 px-4 py-2.5 text-sm text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-primary-500"
-              />
-            </div>
-          </div>
-
-          {/* Section 3: Metode Pembayaran */}
-          <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-4 shadow-sm">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center space-x-2">
-              <CreditCard className="h-5 w-5 text-primary-600" />
-              <span>Pilih Metode Pembayaran</span>
-            </h3>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <Panel title="Cara terima barang">
+            <div className="grid gap-3 sm:grid-cols-2">
               {[
-                { code: 'B2B_CREDIT_TEMPO', title: 'B2B Kasbon Tempo 30 Hari', desc: 'Khusus Mitra Toko Kelontong' },
-                { code: 'COD', title: 'Bayar di Tempat (COD)', desc: 'Bayar tunai ke kurir saat barang sampai' },
-              ].map((m) => (
-                <div
-                  key={m.code}
-                  onClick={() => setSelectedPaymentMethod(m.code)}
-                  className={`cursor-pointer p-4 rounded-2xl border transition-all ${
-                    selectedPaymentMethod === m.code
-                      ? 'border-primary-600 bg-primary-50/50 dark:bg-primary-950/40 shadow-sm'
-                      : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40'
-                  }`}
+                { value: 'DELIVERY' as const, icon: Truck, title: 'Diantar ke rumah', sub: shippings[0] ? `Ongkir mulai ${formatCurrency(Math.min(...shippings.map((s) => s.base_rate)))}` : 'Diantar kurir toko' },
+                { value: 'PICKUP' as const, icon: Store, title: 'Ambil sendiri di toko', sub: 'Gratis ongkir' },
+              ].map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => setDeliveryType(o.value)}
+                  className={`flex items-center gap-3 rounded-2xl border-2 p-4 text-left transition-colors ${deliveryType === o.value ? 'border-primary-600 bg-primary-50/60 dark:bg-primary-950/30' : 'border-slate-200 hover:border-slate-300 dark:border-slate-700'}`}
                 >
-                  <div className="font-bold text-sm text-slate-900 dark:text-white">{m.title}</div>
-                  <div className="text-xs text-slate-500 mt-1">{m.desc}</div>
-                </div>
+                  <o.icon className={`h-7 w-7 flex-shrink-0 ${deliveryType === o.value ? 'text-primary-600' : 'text-slate-400'}`} />
+                  <div>
+                    <div className="font-bold">{o.title}</div>
+                    <div className="text-xs text-slate-500">{o.sub}</div>
+                  </div>
+                </button>
               ))}
             </div>
-          </div>
+            {pickup && (
+              <Field label="Catatan untuk toko (opsional)" className="mt-4">
+                <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Misal: saya ambil jam 5 sore" />
+              </Field>
+            )}
+          </Panel>
+
+          {!pickup && (
+            <Panel title={<><MapPin className="h-5 w-5 text-primary-600" /> Alamat pengiriman</>}>
+              {addresses.length > 0 && (
+                <div className="mb-4 space-y-2">
+                  {addresses.map((a) => (
+                    <label key={a.id} className={`flex cursor-pointer gap-3 rounded-2xl border p-3 ${addressId === a.id ? 'border-primary-600 bg-primary-50/50 dark:bg-primary-950/30' : 'border-slate-200 dark:border-slate-700'}`}>
+                      <input type="radio" name="address" className="mt-1" checked={addressId === a.id} onChange={() => setAddressId(a.id)} />
+                      <div className="text-sm">
+                        <div className="font-bold">{a.title} · {a.recipient_name} <span className="font-normal text-slate-500">({a.phone})</span></div>
+                        <div className="text-slate-600 dark:text-slate-400">{a.full_address}, {a.city}, {a.province} {a.postal_code}</div>
+                      </div>
+                    </label>
+                  ))}
+                  <label className={`flex cursor-pointer items-center gap-3 rounded-2xl border p-3 text-sm font-semibold ${addressId === NEW_ADDRESS ? 'border-primary-600' : 'border-slate-200 dark:border-slate-700'}`}>
+                    <input type="radio" name="address" checked={addressId === NEW_ADDRESS} onChange={() => setAddressId(NEW_ADDRESS)} />
+                    Kirim ke alamat lain
+                  </label>
+                </div>
+              )}
+  
+              {addressId === NEW_ADDRESS && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Nama penerima">
+                    <input className={inputClass} value={newAddr.recipient_name} onChange={(e) => setNewAddr({ ...newAddr, recipient_name: e.target.value })} autoComplete="name" />
+                  </Field>
+                  <Field label="Nomor HP penerima">
+                    <input type="tel" className={inputClass} value={newAddr.phone} onChange={(e) => setNewAddr({ ...newAddr, phone: e.target.value })} placeholder="08xxxxxxxxxx" autoComplete="tel" />
+                  </Field>
+                  <Field label="Alamat lengkap" className="sm:col-span-2">
+                    <textarea rows={2} className={inputClass} value={newAddr.full_address} onChange={(e) => setNewAddr({ ...newAddr, full_address: e.target.value })} placeholder="Nama jalan, nomor rumah, RT/RW, kelurahan, patokan" autoComplete="street-address" />
+                  </Field>
+                  <Field label="Kota / kabupaten">
+                    <input className={inputClass} value={newAddr.city} onChange={(e) => setNewAddr({ ...newAddr, city: e.target.value })} autoComplete="address-level2" />
+                  </Field>
+                  <Field label="Provinsi">
+                    <input className={inputClass} value={newAddr.province} onChange={(e) => setNewAddr({ ...newAddr, province: e.target.value })} autoComplete="address-level1" />
+                  </Field>
+                  <Field label="Kode pos">
+                    <input className={inputClass} value={newAddr.postal_code} onChange={(e) => setNewAddr({ ...newAddr, postal_code: e.target.value })} autoComplete="postal-code" />
+                  </Field>
+                  <Field label="Simpan sebagai">
+                    <input className={inputClass} value={newAddr.title} onChange={(e) => setNewAddr({ ...newAddr, title: e.target.value })} placeholder="Rumah / Toko" />
+                  </Field>
+                  <label className="flex items-center gap-2 text-sm sm:col-span-2">
+                    <input type="checkbox" checked={saveAddress} onChange={(e) => setSaveAddress(e.target.checked)} />
+                    Simpan alamat ini untuk pesanan berikutnya
+                  </label>
+                </div>
+              )}
+  
+              <Field label="Catatan untuk kurir (opsional)" className="mt-4">
+                <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Misal: rumah pagar hijau, titip ke tetangga" />
+              </Field>
+            </Panel>
+          )}
+
+          {!pickup && shippings.length > 1 && (
+            <Panel title={<><Truck className="h-5 w-5 text-primary-600" /> Pengiriman</>}>
+              <div className="space-y-2">
+                {shippings.map((s) => (
+                  <label key={s.id} className={`flex cursor-pointer items-center gap-3 rounded-2xl border p-3 text-sm ${shippingId === s.id ? 'border-primary-600' : 'border-slate-200 dark:border-slate-700'}`}>
+                    <input type="radio" checked={shippingId === s.id} onChange={() => setShippingId(s.id)} />
+                    <div className="flex-1">
+                      <div className="font-bold">{s.name}</div>
+                      <div className="text-xs text-slate-500">{s.courier_name} · {s.estimated_days}</div>
+                    </div>
+                    <div className="font-semibold">{formatCurrency(s.base_rate)}</div>
+                  </label>
+                ))}
+              </div>
+            </Panel>
+          )}
+
+          <Panel title={<><CreditCard className="h-5 w-5 text-primary-600" /> Pembayaran</>}>
+            <div className="space-y-2">
+              {payments.map((m) => (
+                <label key={m.id} className={`flex cursor-pointer gap-3 rounded-2xl border p-3 ${paymentCode === m.code ? 'border-primary-600 bg-primary-50/50 dark:bg-primary-950/30' : 'border-slate-200 dark:border-slate-700'}`}>
+                  <input type="radio" name="payment" className="mt-1" checked={paymentCode === m.code} onChange={() => setPaymentCode(m.code)} />
+                  <div className="text-sm">
+                    <div className="font-bold">{m.type === 'COD' ? (pickup ? 'Bayar tunai saat ambil di toko' : 'Bayar tunai saat barang sampai') : m.name}</div>
+                    {m.type !== 'COD' && m.description && <div className="whitespace-pre-line text-xs text-slate-500">{m.description}</div>}
+                    {m.type === 'B2B_CREDIT' && credit && (
+                      <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">Sisa limit kasbon: <b>{formatCurrency(credit.remaining_credit)}</b></div>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+            {payment?.type === 'MANUAL_TRANSFER' && (
+              <p className="mt-3 rounded-xl bg-sky-50 p-3 text-xs text-sky-800 dark:bg-sky-950/40 dark:text-sky-300">
+                Setelah pesanan dibuat, transfer sesuai total lalu unggah bukti transfer di halaman pesanan. Pesanan diproses setelah pembayaran diverifikasi toko.
+              </p>
+            )}
+            {creditShort && (
+              <p className="mt-3 rounded-xl bg-rose-50 p-3 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                Sisa limit kasbon tidak cukup untuk pesanan ini. Pilih metode lain atau lunasi kasbon terlebih dahulu.
+              </p>
+            )}
+          </Panel>
         </div>
 
-        {/* Right Sticky Checkout Summary */}
-        <div className="h-fit sticky top-24 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-6 shadow-sm">
-          <h3 className="text-base font-extrabold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
-            Rincian Pembayaran
-          </h3>
-
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between text-slate-600 dark:text-slate-400">
-              <span>Total Barang Dipesan</span>
-              <span className="font-semibold text-slate-900 dark:text-white">{totalItemQuantity} Item</span>
-            </div>
-            <div className="flex justify-between text-slate-600 dark:text-slate-400">
-              <span>Subtotal Produk</span>
-              <span className="font-bold text-slate-900 dark:text-white">
-                {formatCurrency(subtotalAmount)}
-              </span>
-            </div>
-            <div className="flex justify-between text-slate-600 dark:text-slate-400">
-              <span>Ongkos Kirim Estimasi</span>
-              <span className="font-bold text-slate-900 dark:text-white">
-                {formatCurrency(shippingFee)}
-              </span>
-            </div>
-          </div>
-
-          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
-            <span className="font-bold text-slate-900 dark:text-white">Grand Total</span>
-            <span className="text-xl font-black text-primary-600">
-              {formatCurrency(grandTotalAmount)}
-            </span>
-          </div>
-
+        <div className="h-fit space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:sticky lg:top-28">
+          <h2 className="text-base font-extrabold">Ringkasan</h2>
+          {!summary ? (
+            <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary-600" />
+          ) : (
+            <>
+              <ul className="max-h-60 space-y-2 overflow-y-auto">
+                {summary.items.map((i) => (
+                  <li key={i.id} className="flex items-center gap-3 text-sm">
+                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800">
+                      {i.image_url ? <img src={i.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="h-4 w-4 text-slate-400" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{i.product_name}</div>
+                      <div className="text-xs text-slate-500">{i.quantity} {i.unit_name} × {formatCurrency(i.unit_price)}</div>
+                    </div>
+                    <div className="font-semibold">{formatCurrency(i.subtotal)}</div>
+                  </li>
+                ))}
+              </ul>
+              <div className="space-y-1.5 border-t border-slate-100 pt-3 text-sm dark:border-slate-800">
+                <div className="flex justify-between text-slate-600 dark:text-slate-400"><span>Subtotal ({summary.total_items} barang)</span><span>{formatCurrency(summary.subtotal_amount)}</span></div>
+                <div className="flex justify-between text-slate-600 dark:text-slate-400"><span>Ongkir</span><span>{pickup ? 'Gratis (ambil di toko)' : formatCurrency(summary.estimated_shipping_fee)}</span></div>
+                <div className="flex justify-between pt-2 text-lg font-black"><span>Total</span><span className="text-primary-600">{formatCurrency(total)}</span></div>
+              </div>
+              {summary.validation_errors && summary.validation_errors.length > 0 && (
+                <div className="space-y-1 rounded-xl bg-rose-50 p-3 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                  {summary.validation_errors.map((e) => (
+                    <div key={e} className="flex gap-1"><AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" /> {e}</div>
+                  ))}
+                  <Link to="/cart" className="font-bold underline">Ubah keranjang</Link>
+                </div>
+              )}
+            </>
+          )}
           <button
-            onClick={handlePlaceOrder}
-            disabled={submitting || displayItems.length === 0}
-            className="flex w-full items-center justify-center space-x-2 rounded-2xl bg-primary-600 py-3.5 text-sm font-bold text-white hover:bg-primary-700 transition-colors shadow-lg shadow-primary-600/30 disabled:opacity-50"
+            onClick={placeOrder}
+            disabled={submitting || !summary?.can_proceed_to_order || !payment || !!creditShort}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary-600 py-3.5 text-sm font-bold text-white shadow-lg shadow-primary-600/30 hover:bg-primary-700 disabled:opacity-50"
           >
-            <span>{submitting ? 'Membuat Pesanan (ACID Tx)...' : 'Buat Pesanan Sekarang'}</span>
-            <ArrowRight className="h-4 w-4" />
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            {submitting ? 'Memproses...' : 'Buat Pesanan'}
           </button>
         </div>
       </div>

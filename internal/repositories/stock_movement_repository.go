@@ -46,3 +46,30 @@ func (r *stockMovementRepository) FindByInventoryID(ctx context.Context, invento
 
 	return movements, total, nil
 }
+
+func (r *stockMovementRepository) FindAll(ctx context.Context, req dto.PaginationRequest, movementType string) ([]models.StockMovement, int64, error) {
+	var movements []models.StockMovement
+	var total int64
+
+	db := r.db.WithContext(ctx).Model(&models.StockMovement{}).
+		Preload("ProductUnit").
+		Preload("Inventory.Product")
+
+	if movementType != "" {
+		db = db.Where("movement_type = ?", movementType)
+	}
+	if req.Search != "" {
+		db = db.Where("reference_number ILIKE ?", utils.SearchTerm(req.Search))
+	}
+
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	db = utils.ApplyPagination(db, req)
+	if err := db.Find(&movements).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return movements, total, nil
+}

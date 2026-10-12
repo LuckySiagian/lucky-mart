@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -30,6 +31,7 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
+	URL             string        `mapstructure:"DB_URL"`
 	Host            string        `mapstructure:"DB_HOST"`
 	Port            string        `mapstructure:"DB_PORT"`
 	User            string        `mapstructure:"DB_USER"`
@@ -52,6 +54,15 @@ type CORSConfig struct {
 	AllowOrigins []string `mapstructure:"ALLOW_ORIGINS"`
 }
 
+const (
+	defaultAccessSecret  = "dev-only-access-secret-change-me"
+	defaultRefreshSecret = "dev-only-refresh-secret-change-me"
+)
+
+// LoadConfig reads .env.<APP_ENV> (falling back to .env) and then real
+// environment variables, which always win. Variable names are listed in
+// .env.example. On hosting platforms the conventional PORT and DATABASE_URL
+// variables are honoured too.
 func LoadConfig() (*Config, error) {
 	env := os.Getenv("APP_ENV")
 	if env == "" {
@@ -63,7 +74,6 @@ func LoadConfig() (*Config, error) {
 	viper.AddConfigPath(".")
 	viper.AddConfigPath("./config")
 
-	// Set Default Configurations
 	viper.SetDefault("APP.NAME", "LuckyMart API")
 	viper.SetDefault("APP.ENV", env)
 	viper.SetDefault("APP.VERSION", "1.0.0")
@@ -82,53 +92,115 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("DATABASE.DB_MAX_IDLE_CONNS", 10)
 	viper.SetDefault("DATABASE.DB_CONN_MAX_LIFETIME", 15*time.Minute)
 
-	viper.SetDefault("JWT.JWT_ACCESS_SECRET", "super-secret-access-key")
-	viper.SetDefault("JWT.JWT_REFRESH_SECRET", "super-secret-refresh-key")
+	viper.SetDefault("JWT.JWT_ACCESS_SECRET", defaultAccessSecret)
+	viper.SetDefault("JWT.JWT_REFRESH_SECRET", defaultRefreshSecret)
 	viper.SetDefault("JWT.JWT_ACCESS_TTL", 15*time.Minute)
 	viper.SetDefault("JWT.JWT_REFRESH_TTL", 7*24*time.Hour)
 
-	viper.SetDefault("CORS.ALLOW_ORIGINS", []string{"*"})
+	viper.SetDefault("CORS.ALLOW_ORIGINS", "*")
 
 	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	if err := viper.ReadInConfig(); err != nil {
-		// If specific env file is missing, try fallback .env
 		viper.SetConfigName(".env")
 		_ = viper.ReadInConfig()
 	}
 
-	getStringVal := func(dotKey string) string {
+	getString := func(dotKey string) string {
 		flatKey := strings.ReplaceAll(dotKey, ".", "_")
 		if val := viper.GetString(flatKey); val != "" {
 			return val
 		}
 		return viper.GetString(dotKey)
 	}
+	getDuration := func(dotKey string) time.Duration {
+		if raw := getString(dotKey); raw != "" {
+			if d, err := time.ParseDuration(raw); err == nil {
+				return d
+			}
+		}
+		return viper.GetDuration(dotKey)
+	}
+	getInt := func(dotKey string) int {
+		flatKey := strings.ReplaceAll(dotKey, ".", "_")
+		if viper.IsSet(flatKey) {
+			return viper.GetInt(flatKey)
+		}
+		return viper.GetInt(dotKey)
+	}
 
 	var cfg Config
-	cfg.App.Name = getStringVal("APP.NAME")
-	cfg.App.Env = getStringVal("APP.ENV")
-	cfg.App.Version = getStringVal("APP.VERSION")
+	cfg.App.Name = getString("APP.NAME")
+	cfg.App.Env = getString("APP.ENV")
+	cfg.App.Version = getString("APP.VERSION")
 
-	cfg.Server.Port = getStringVal("SERVER.PORT")
-	cfg.Server.ReadTimeout = viper.GetDuration("SERVER.READ_TIMEOUT")
-	cfg.Server.WriteTimeout = viper.GetDuration("SERVER.WRITE_TIMEOUT")
+	cfg.Server.Port = getString("SERVER.PORT")
+	if port := os.Getenv("PORT"); port != "" {
+		cfg.Server.Port = port
+	}
+	cfg.Server.ReadTimeout = getDuration("SERVER.READ_TIMEOUT")
+	cfg.Server.WriteTimeout = getDuration("SERVER.WRITE_TIMEOUT")
 
-	cfg.Database.Host = getStringVal("DATABASE.DB_HOST")
-	cfg.Database.Port = getStringVal("DATABASE.DB_PORT")
-	cfg.Database.User = getStringVal("DATABASE.DB_USER")
-	cfg.Database.Password = getStringVal("DATABASE.DB_PASSWORD")
-	cfg.Database.Name = getStringVal("DATABASE.DB_NAME")
-	cfg.Database.SSLMode = getStringVal("DATABASE.DB_SSLMODE")
-	cfg.Database.MaxOpenConns = viper.GetInt("DATABASE.DB_MAX_OPEN_CONNS")
-	cfg.Database.MaxIdleConns = viper.GetInt("DATABASE.DB_MAX_IDLE_CONNS")
-	cfg.Database.ConnMaxLifetime = viper.GetDuration("DATABASE.DB_CONN_MAX_LIFETIME")
+	cfg.Database.URL = os.Getenv("DATABASE_URL")
+	cfg.Database.Host = getString("DATABASE.DB_HOST")
+	cfg.Database.Port = getString("DATABASE.DB_PORT")
+	cfg.Database.User = getString("DATABASE.DB_USER")
+	cfg.Database.Password = getString("DATABASE.DB_PASSWORD")
+	cfg.Database.Name = getString("DATABASE.DB_NAME")
+	cfg.Database.SSLMode = getString("DATABASE.DB_SSLMODE")
+	cfg.Database.MaxOpenConns = getInt("DATABASE.DB_MAX_OPEN_CONNS")
+	cfg.Database.MaxIdleConns = getInt("DATABASE.DB_MAX_IDLE_CONNS")
+	cfg.Database.ConnMaxLifetime = getDuration("DATABASE.DB_CONN_MAX_LIFETIME")
 
-	cfg.JWT.AccessSecret = getStringVal("JWT.JWT_ACCESS_SECRET")
-	cfg.JWT.RefreshSecret = getStringVal("JWT.JWT_REFRESH_SECRET")
-	cfg.JWT.AccessTTL = viper.GetDuration("JWT.JWT_ACCESS_TTL")
-	cfg.JWT.RefreshTTL = viper.GetDuration("JWT.JWT_REFRESH_TTL")
+	cfg.JWT.AccessSecret = getString("JWT.JWT_ACCESS_SECRET")
+	cfg.JWT.RefreshSecret = getString("JWT.JWT_REFRESH_SECRET")
+	cfg.JWT.AccessTTL = getDuration("JWT.JWT_ACCESS_TTL")
+	cfg.JWT.RefreshTTL = getDuration("JWT.JWT_REFRESH_TTL")
 
+	cfg.CORS.AllowOrigins = splitList(getString("CORS.ALLOW_ORIGINS"))
+
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+func splitList(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(strings.Trim(part, `"`)); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// validate refuses to start production with settings that would be unsafe
+// on the public internet.
+func (c *Config) validate() error {
+	if c.App.Env != "production" {
+		return nil
+	}
+
+	var problems []string
+	if c.JWT.AccessSecret == defaultAccessSecret || len(c.JWT.AccessSecret) < 32 {
+		problems = append(problems, "JWT_JWT_ACCESS_SECRET must be set to a random value of at least 32 characters")
+	}
+	if c.JWT.RefreshSecret == defaultRefreshSecret || len(c.JWT.RefreshSecret) < 32 {
+		problems = append(problems, "JWT_JWT_REFRESH_SECRET must be set to a random value of at least 32 characters")
+	}
+	if c.JWT.AccessSecret == c.JWT.RefreshSecret {
+		problems = append(problems, "access and refresh JWT secrets must differ")
+	}
+	for _, o := range c.CORS.AllowOrigins {
+		if o == "*" {
+			problems = append(problems, "CORS_ALLOW_ORIGINS must list the real frontend URLs, not *")
+			break
+		}
+	}
+	if len(problems) > 0 {
+		return errors.New("unsafe production configuration: " + strings.Join(problems, "; "))
+	}
+	return nil
 }

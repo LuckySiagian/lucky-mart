@@ -6,8 +6,8 @@ import (
 
 type Cart struct {
 	BaseModel
-	UserID     uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex" json:"user_id"`
-	TotalItems int        `gorm:"not null;default:0" json:"total_items"`
+	UserID      uuid.UUID `gorm:"type:uuid;not null;uniqueIndex" json:"user_id"`
+	TotalItems  int       `gorm:"not null;default:0" json:"total_items"`
 	TotalAmount float64   `gorm:"type:numeric(15,2);not null;default:0.00" json:"total_amount"`
 
 	// Relationships

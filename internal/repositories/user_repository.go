@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type userRepository struct {
@@ -103,26 +104,40 @@ func (r *userRepository) Create(ctx context.Context, user *models.User) error {
 }
 
 func (r *userRepository) Update(ctx context.Context, user *models.User) error {
-	return r.db.WithContext(ctx).Save(user).Error
+	return r.db.WithContext(ctx).Omit(clause.Associations).Save(user).Error
 }
 
 func (r *userRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	return r.db.WithContext(ctx).Delete(&models.User{}, id).Error
 }
 
-func (r *userRepository) FindAll(ctx context.Context, req dto.PaginationRequest) ([]models.User, int64, error) {
+func (r *userRepository) FindAll(ctx context.Context, req dto.PaginationRequest, role string) ([]models.User, int64, error) {
 	var users []models.User
 	var total int64
 
 	db := r.db.WithContext(ctx).Model(&models.User{}).Preload("B2BProfile")
+	if role != "" {
+		db = db.Where("role = ?", role)
+	}
+	if req.Search != "" {
+		term := utils.SearchTerm(req.Search)
+		db = db.Where("full_name ILIKE ? OR phone_number ILIKE ? OR email ILIKE ?", term, term, term)
+	}
+
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	db = utils.ApplyPagination(db, req)
+	db = utils.ApplyPagination(db, req, "full_name", "role", "last_login_at")
 	if err := db.Find(&users).Error; err != nil {
 		return nil, 0, err
 	}
 
 	return users, total, nil
+}
+
+func (r *userRepository) CountByRole(ctx context.Context, role string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&models.User{}).Where("role = ? AND is_active = true", role).Count(&count).Error
+	return count, err
 }

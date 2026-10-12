@@ -19,7 +19,8 @@ type UserRepository interface {
 	Create(ctx context.Context, user *models.User) error
 	Update(ctx context.Context, user *models.User) error
 	Delete(ctx context.Context, id uuid.UUID) error
-	FindAll(ctx context.Context, req dto.PaginationRequest) ([]models.User, int64, error)
+	FindAll(ctx context.Context, req dto.PaginationRequest, role string) ([]models.User, int64, error)
+	CountByRole(ctx context.Context, role string) (int64, error)
 }
 
 type B2BProfileRepository interface {
@@ -48,13 +49,15 @@ type PermissionRepository interface {
 type CategoryRepository interface {
 	FindAll(ctx context.Context) ([]models.Category, error)
 	FindByID(ctx context.Context, id uuid.UUID) (*models.Category, error)
+	FindBySlug(ctx context.Context, slug string) (*models.Category, error)
+	CountProducts(ctx context.Context, id uuid.UUID) (int64, error)
 	Create(ctx context.Context, category *models.Category) error
 	Update(ctx context.Context, category *models.Category) error
 	Delete(ctx context.Context, id uuid.UUID) error
 }
 
 type ProductRepository interface {
-	FindAll(ctx context.Context, req dto.PaginationRequest, categoryID *uuid.UUID) ([]models.Product, int64, error)
+	FindAll(ctx context.Context, req dto.PaginationRequest, categoryID *uuid.UUID, includeInactive bool) ([]models.Product, int64, error)
 	FindByID(ctx context.Context, id uuid.UUID) (*models.Product, error)
 	FindBySKU(ctx context.Context, sku string) (*models.Product, error)
 	Create(ctx context.Context, tx *gorm.DB, product *models.Product) error
@@ -67,6 +70,7 @@ type InventoryRepository interface {
 	FindByProductUnitID(ctx context.Context, unitID uuid.UUID) (*models.Inventory, error)
 	FindByID(ctx context.Context, id uuid.UUID) (*models.Inventory, error)
 	FindLowStock(ctx context.Context) ([]models.Inventory, error)
+	FindAll(ctx context.Context, req dto.PaginationRequest) ([]models.Inventory, int64, error)
 	Create(ctx context.Context, tx *gorm.DB, inv *models.Inventory) error
 	UpdateStock(ctx context.Context, tx *gorm.DB, inv *models.Inventory) error
 }
@@ -74,6 +78,7 @@ type InventoryRepository interface {
 type StockMovementRepository interface {
 	Create(ctx context.Context, tx *gorm.DB, movement *models.StockMovement) error
 	FindByInventoryID(ctx context.Context, inventoryID uuid.UUID, req dto.PaginationRequest) ([]models.StockMovement, int64, error)
+	FindAll(ctx context.Context, req dto.PaginationRequest, movementType string) ([]models.StockMovement, int64, error)
 }
 
 type CartRepository interface {
@@ -95,8 +100,8 @@ type OrderRepository interface {
 	Create(ctx context.Context, tx *gorm.DB, order *models.Order) error
 	Update(ctx context.Context, tx *gorm.DB, order *models.Order) error
 	FindByID(ctx context.Context, id uuid.UUID) (*models.Order, error)
-	FindByUserID(ctx context.Context, userID uuid.UUID, req dto.PaginationRequest) ([]models.Order, int64, error)
-	FindAll(ctx context.Context, req dto.PaginationRequest) ([]models.Order, int64, error)
+	FindByUserID(ctx context.Context, userID uuid.UUID, req dto.PaginationRequest, status string) ([]models.Order, int64, error)
+	FindAll(ctx context.Context, req dto.PaginationRequest, status string) ([]models.Order, int64, error)
 	AddHistory(ctx context.Context, tx *gorm.DB, history *models.OrderHistory) error
 }
 
@@ -135,6 +140,7 @@ type ShipmentRepository interface {
 	Update(ctx context.Context, tx *gorm.DB, shipment *models.Shipment) error
 	FindByID(ctx context.Context, id uuid.UUID) (*models.Shipment, error)
 	FindByOrderID(ctx context.Context, orderID uuid.UUID) (*models.Shipment, error)
+	FindAll(ctx context.Context, req dto.PaginationRequest, status string) ([]models.Shipment, int64, error)
 	AddTracking(ctx context.Context, tx *gorm.DB, tracking *models.ShipmentTracking) error
 }
 
@@ -143,13 +149,15 @@ type PaymentRepository interface {
 	Update(ctx context.Context, tx *gorm.DB, payment *models.Payment) error
 	FindByID(ctx context.Context, id uuid.UUID) (*models.Payment, error)
 	FindByInvoiceID(ctx context.Context, invoiceID uuid.UUID) (*models.Payment, error)
-	FindByUserID(ctx context.Context, userID uuid.UUID, req dto.PaginationRequest) ([]models.Payment, int64, error)
-	FindAll(ctx context.Context, req dto.PaginationRequest) ([]models.Payment, int64, error)
+	FindByOrderID(ctx context.Context, orderID uuid.UUID) ([]models.Payment, error)
+	FindByUserID(ctx context.Context, userID uuid.UUID, req dto.PaginationRequest, status string) ([]models.Payment, int64, error)
+	FindAll(ctx context.Context, req dto.PaginationRequest, status string) ([]models.Payment, int64, error)
 	FindWaitingConfirmation(ctx context.Context, req dto.PaginationRequest) ([]models.Payment, int64, error)
 }
 
 type PaymentMethodRepository interface {
 	FindAll(ctx context.Context) ([]models.PaymentMethod, error)
+	FindAllIncludingInactive(ctx context.Context) ([]models.PaymentMethod, error)
 	FindByID(ctx context.Context, id uuid.UUID) (*models.PaymentMethod, error)
 	FindByCode(ctx context.Context, code string) (*models.PaymentMethod, error)
 	Create(ctx context.Context, method *models.PaymentMethod) error
@@ -179,6 +187,7 @@ type CreditPaymentRepository interface {
 }
 
 type NotificationRepository interface {
+	CountUnread(ctx context.Context, userID uuid.UUID) (int64, error)
 	Create(ctx context.Context, tx *gorm.DB, notification *models.Notification) error
 	Update(ctx context.Context, tx *gorm.DB, notification *models.Notification) error
 	FindByID(ctx context.Context, id uuid.UUID) (*models.Notification, error)

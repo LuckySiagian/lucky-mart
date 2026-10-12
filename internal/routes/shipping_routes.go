@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"backend-sembako/internal/constants"
 	"backend-sembako/internal/handler"
 	"backend-sembako/internal/middleware"
 	"backend-sembako/pkg/jwt"
@@ -21,12 +20,12 @@ func RegisterShippingRoutes(r *gin.RouterGroup, shippingHandler *handler.Shippin
 			protected.GET("/orders/:order_id", shippingHandler.GetShipmentByOrderID)
 		}
 
-		adminOnly := shipping.Group("")
-		adminOnly.Use(middleware.JWTAuth(jwtService))
-		adminOnly.Use(middleware.RequireRoles(constants.RoleSuperAdmin, constants.RoleStoreManager, constants.RoleWarehouseStaff, constants.RoleDriver))
+		staff := shipping.Group("")
+		staff.Use(middleware.JWTAuth(jwtService), middleware.RequireRoles(deliveryRoles...))
 		{
-			adminOnly.POST("/shipments", shippingHandler.CreateShipment)
-			adminOnly.PATCH("/shipments/:id/status", shippingHandler.UpdateShipmentStatus)
+			staff.GET("/shipments", shippingHandler.GetShipments)
+			staff.POST("/shipments", shippingHandler.CreateShipment)
+			staff.PATCH("/shipments/:id/status", shippingHandler.UpdateShipmentStatus)
 		}
 	}
 }

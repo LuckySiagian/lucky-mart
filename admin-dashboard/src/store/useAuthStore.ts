@@ -1,15 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { Role, User } from '../types';
 
-export interface UserProfile {
-  id: string;
-  full_name: string;
-  phone_number: string;
-  email: string;
-  role: 'SUPER_ADMIN' | 'STORE_MANAGER' | 'WAREHOUSE_STAFF' | 'DRIVER' | 'B2B_CUSTOMER' | 'B2C_CUSTOMER';
-  is_email_verified: boolean;
-  is_phone_verified: boolean;
-}
+export type UserProfile = User;
+
+export const STAFF_ROLES: Role[] = ['SUPER_ADMIN', 'STORE_MANAGER', 'WAREHOUSE_STAFF', 'DRIVER'];
+export const MANAGER_ROLES: Role[] = ['SUPER_ADMIN', 'STORE_MANAGER'];
 
 interface AuthState {
   user: UserProfile | null;
@@ -17,7 +13,8 @@ interface AuthState {
   refreshToken: string | null;
   isAuthenticated: boolean;
   setAuth: (user: UserProfile, accessToken: string, refreshToken: string) => void;
-  setTokens: (accessToken: string, refreshToken: string) => void;
+  setTokens: (accessToken: string, refreshToken: string, user?: UserProfile) => void;
+  setUser: (user: UserProfile) => void;
   logout: () => void;
 }
 
@@ -28,28 +25,14 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       refreshToken: null,
       isAuthenticated: false,
-      setAuth: (user, accessToken, refreshToken) =>
-        set({
-          user,
-          accessToken,
-          refreshToken,
-          isAuthenticated: true,
-        }),
-      setTokens: (accessToken, refreshToken) =>
-        set({
-          accessToken,
-          refreshToken,
-        }),
-      logout: () =>
-        set({
-          user: null,
-          accessToken: null,
-          refreshToken: null,
-          isAuthenticated: false,
-        }),
+      setAuth: (user, accessToken, refreshToken) => set({ user, accessToken, refreshToken, isAuthenticated: true }),
+      setTokens: (accessToken, refreshToken, user) =>
+        set((state) => ({ accessToken, refreshToken, user: user ?? state.user })),
+      setUser: (user) => set({ user }),
+      logout: () => set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false }),
     }),
-    {
-      name: 'luckymart-admin-auth-storage',
-    }
+    { name: 'luckymart-admin-auth-storage' }
   )
 );
+
+export const hasRole = (user: UserProfile | null, roles: Role[]) => !!user && roles.includes(user.role);

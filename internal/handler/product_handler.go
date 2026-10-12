@@ -20,7 +20,17 @@ func NewProductHandler(productService services.ProductService) *ProductHandler {
 	return &ProductHandler{productService: productService}
 }
 
+// GetProducts lists the public catalog. With include_inactive=true (admin
+// route only) hidden products are listed too.
 func (h *ProductHandler) GetProducts(c *gin.Context) {
+	h.listProducts(c, false)
+}
+
+func (h *ProductHandler) GetProductsAdmin(c *gin.Context) {
+	h.listProducts(c, true)
+}
+
+func (h *ProductHandler) listProducts(c *gin.Context, includeInactive bool) {
 	var req dto.PaginationRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		_ = c.Error(err)
@@ -28,14 +38,13 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 	}
 
 	var categoryID *uuid.UUID
-	catStr := c.Query("category_id")
-	if catStr != "" {
+	if catStr := c.Query("category_id"); catStr != "" {
 		if id, err := utils.ParseUUID(catStr); err == nil {
 			categoryID = &id
 		}
 	}
 
-	res, err := h.productService.GetProducts(c.Request.Context(), req, categoryID)
+	res, err := h.productService.GetProducts(c.Request.Context(), req, categoryID, includeInactive)
 	if err != nil {
 		helpers.SendInternalServerError(c, err.Error())
 		return
@@ -45,16 +54,14 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 }
 
 func (h *ProductHandler) GetProductByID(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid product UUID format", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
-	res, err := h.productService.GetProductByID(c.Request.Context(), id)
+	res, err := h.productService.GetProductByID(c.Request.Context(), id, false)
 	if err != nil {
-		helpers.SendNotFound(c, err.Error())
+		sendServiceError(c, err)
 		return
 	}
 
@@ -70,7 +77,7 @@ func (h *ProductHandler) CreateProduct(c *gin.Context) {
 
 	res, err := h.productService.CreateProduct(c.Request.Context(), req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -78,7 +85,10 @@ func (h *ProductHandler) CreateProduct(c *gin.Context) {
 }
 
 func (h *ProductHandler) UpdateProduct(c *gin.Context) {
-	idStr := c.Param("id")
+	id, ok := parseIDParam(c, "id")
+	if !ok {
+		return
+	}
 
 	var req dto.UpdateProductDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -86,9 +96,9 @@ func (h *ProductHandler) UpdateProduct(c *gin.Context) {
 		return
 	}
 
-	res, err := h.productService.UpdateProduct(c.Request.Context(), idStr, req)
+	res, err := h.productService.UpdateProduct(c.Request.Context(), id, req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -96,19 +106,17 @@ func (h *ProductHandler) UpdateProduct(c *gin.Context) {
 }
 
 func (h *ProductHandler) DeleteProduct(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid product UUID format", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
 	if err := h.productService.DeleteProduct(c.Request.Context(), id); err != nil {
-		helpers.SendNotFound(c, err.Error())
+		sendServiceError(c, err)
 		return
 	}
 
-	helpers.ResponseSuccess(c, http.StatusOK, "Product soft-deleted successfully", nil)
+	helpers.ResponseSuccess(c, http.StatusOK, "Product deleted successfully", nil)
 }
 
 func (h *ProductHandler) GetCategories(c *gin.Context) {
@@ -121,21 +129,16 @@ func (h *ProductHandler) GetCategories(c *gin.Context) {
 	helpers.ResponseSuccess(c, http.StatusOK, "Categories fetched successfully", res)
 }
 
-type createCategoryReq struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
-}
-
 func (h *ProductHandler) CreateCategory(c *gin.Context) {
-	var req createCategoryReq
+	var req dto.CreateCategoryDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.SendBadRequest(c, "Name is required", nil)
+		_ = c.Error(err)
 		return
 	}
 
 	res, err := h.productService.CreateCategory(c.Request.Context(), req.Name, req.Description)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -143,16 +146,20 @@ func (h *ProductHandler) CreateCategory(c *gin.Context) {
 }
 
 func (h *ProductHandler) UpdateCategory(c *gin.Context) {
-	idStr := c.Param("id")
-	var req createCategoryReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.SendBadRequest(c, "Name is required", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
-	res, err := h.productService.UpdateCategory(c.Request.Context(), idStr, req.Name, req.Description)
+	var req dto.CreateCategoryDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	res, err := h.productService.UpdateCategory(c.Request.Context(), id, req.Name, req.Description)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -160,15 +167,13 @@ func (h *ProductHandler) UpdateCategory(c *gin.Context) {
 }
 
 func (h *ProductHandler) DeleteCategory(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid category UUID format", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
 	if err := h.productService.DeleteCategory(c.Request.Context(), id); err != nil {
-		helpers.SendNotFound(c, err.Error())
+		sendServiceError(c, err)
 		return
 	}
 

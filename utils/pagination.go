@@ -2,25 +2,38 @@ package utils
 
 import (
 	"fmt"
+	"strings"
 
 	"backend-sembako/internal/dto"
 
 	"gorm.io/gorm"
 )
 
-func ApplyPagination(db *gorm.DB, req dto.PaginationRequest) *gorm.DB {
+// ApplyPagination applies ordering, offset and limit. Sorting is restricted to
+// the columns listed in allowedSort (plus created_at) so a user-supplied
+// sort_by value can never be injected into the SQL ORDER BY clause.
+// Searching is left to each repository because searchable columns differ per table.
+func ApplyPagination(db *gorm.DB, req dto.PaginationRequest, allowedSort ...string) *gorm.DB {
 	req.SetDefaults()
 
-	// Apply Search Filter if provided
-	if req.Search != "" {
-		searchTerm := fmt.Sprintf("%%%s%%", req.Search)
-		db = db.Where("name ILIKE ? OR full_name ILIKE ? OR phone_number ILIKE ?", searchTerm, searchTerm, searchTerm)
+	sortBy := "created_at"
+	for _, col := range allowedSort {
+		if req.SortBy == col {
+			sortBy = col
+			break
+		}
 	}
 
-	// Apply Order By
-	sortOrder := fmt.Sprintf("%s %s", req.SortBy, req.SortDir)
-	db = db.Order(sortOrder)
+	sortDir := "DESC"
+	if strings.EqualFold(req.SortDir, "ASC") {
+		sortDir = "ASC"
+	}
 
-	// Apply Offset & Limit
+	db = db.Order(fmt.Sprintf("%s %s", sortBy, sortDir))
 	return db.Offset(req.GetOffset()).Limit(req.Limit)
+}
+
+// SearchTerm wraps a search string for use in an ILIKE clause.
+func SearchTerm(s string) string {
+	return "%" + strings.TrimSpace(s) + "%"
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"backend-sembako/helpers"
@@ -12,18 +13,24 @@ import (
 	"backend-sembako/internal/dto"
 	"backend-sembako/internal/models"
 	"backend-sembako/internal/repositories"
+	"backend-sembako/pkg/eventbus"
 	"backend-sembako/pkg/jwt"
 
 	"github.com/google/uuid"
 )
 
 var (
-	ErrPhoneAlreadyExists = errors.New("phone number is already registered")
-	ErrEmailAlreadyExists = errors.New("email address is already registered")
-	ErrInvalidCredentials = errors.New("invalid phone number or password")
-	ErrAccountLocked      = errors.New("account is temporarily locked due to multiple failed login attempts. Please try again later")
-	ErrUserInactive       = errors.New("account is inactive. Please contact store administrator")
-	ErrInvalidToken       = errors.New("token is invalid or expired")
+	ErrPhoneAlreadyExists = errors.New("nomor HP sudah terdaftar")
+	ErrEmailAlreadyExists = errors.New("email sudah terdaftar")
+	ErrInvalidCredentials = errors.New("nomor HP atau kata sandi salah")
+	ErrAccountLocked      = errors.New("akun dikunci sementara karena terlalu banyak percobaan masuk yang gagal; coba lagi 15 menit lagi")
+	ErrUserInactive       = errors.New("akun tidak aktif; hubungi admin toko")
+	ErrInvalidToken       = errors.New("sesi tidak valid atau sudah kedaluwarsa; silakan masuk lagi")
+)
+
+const (
+	maxFailedLogins = 5
+	lockoutDuration = 15 * time.Minute
 )
 
 type AuthService interface {
@@ -32,8 +39,9 @@ type AuthService interface {
 	RefreshToken(ctx context.Context, req dto.RefreshTokenDTO) (*dto.AuthResponseDTO, error)
 	Logout(ctx context.Context, userID uuid.UUID) error
 	GetCurrentUser(ctx context.Context, userID uuid.UUID) (*dto.UserProfileResponse, error)
+	UpdateProfile(ctx context.Context, userID uuid.UUID, req dto.UpdateProfileDTO) (*dto.UserProfileResponse, error)
 	ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordDTO) error
-	ForgotPassword(ctx context.Context, req dto.ForgotPasswordDTO) (string, error)
+	ForgotPassword(ctx context.Context, req dto.ForgotPasswordDTO) error
 	ResetPassword(ctx context.Context, req dto.ResetPasswordDTO) error
 	VerifyEmail(ctx context.Context, req dto.VerifyEmailDTO) error
 }
@@ -44,6 +52,8 @@ type authService struct {
 	refreshTokenRepo repositories.RefreshTokenRepository
 	loginHistoryRepo repositories.LoginHistoryRepository
 	jwtService       jwt.JWTService
+	refreshTTL       time.Duration
+	bus              eventbus.EventBus
 }
 
 func NewAuthService(
@@ -52,6 +62,8 @@ func NewAuthService(
 	refreshTokenRepo repositories.RefreshTokenRepository,
 	loginHistoryRepo repositories.LoginHistoryRepository,
 	jwtService jwt.JWTService,
+	refreshTTL time.Duration,
+	bus eventbus.EventBus,
 ) AuthService {
 	return &authService{
 		userRepo:         userRepo,
@@ -59,16 +71,16 @@ func NewAuthService(
 		refreshTokenRepo: refreshTokenRepo,
 		loginHistoryRepo: loginHistoryRepo,
 		jwtService:       jwtService,
+		refreshTTL:       refreshTTL,
+		bus:              bus,
 	}
 }
 
 func (s *authService) RegisterCustomer(ctx context.Context, req dto.RegisterCustomerDTO) (*dto.AuthResponseDTO, error) {
-	// Validate password strength
 	if err := helpers.ValidatePasswordStrength(req.Password); err != nil {
 		return nil, err
 	}
 
-	// Check existing phone number
 	existingPhone, err := s.userRepo.FindByPhoneNumber(ctx, req.PhoneNumber)
 	if err != nil {
 		return nil, err
@@ -77,8 +89,7 @@ func (s *authService) RegisterCustomer(ctx context.Context, req dto.RegisterCust
 		return nil, ErrPhoneAlreadyExists
 	}
 
-	// Check existing email
-	if req.Email != nil && *req.Email != "" {
+	if req.Email != nil && strings.TrimSpace(*req.Email) != "" {
 		existingEmail, err := s.userRepo.FindByEmail(ctx, *req.Email)
 		if err != nil {
 			return nil, err
@@ -86,9 +97,10 @@ func (s *authService) RegisterCustomer(ctx context.Context, req dto.RegisterCust
 		if existingEmail != nil {
 			return nil, ErrEmailAlreadyExists
 		}
+	} else {
+		req.Email = nil
 	}
 
-	// Hash password
 	hashedPassword, err := helpers.HashPassword(req.Password)
 	if err != nil {
 		return nil, err
@@ -99,77 +111,41 @@ func (s *authService) RegisterCustomer(ctx context.Context, req dto.RegisterCust
 		role = constants.RoleB2BCustomer
 	}
 
-	// Email Verification Token
 	verToken := uuid.New().String()
 	verExpires := time.Now().Add(24 * time.Hour)
 
 	user := &models.User{
-		FullName:                   req.FullName,
+		FullName:                   strings.TrimSpace(req.FullName),
 		Email:                      req.Email,
 		PhoneNumber:                req.PhoneNumber,
 		PasswordHash:               hashedPassword,
 		Role:                       role,
 		IsActive:                   true,
-		IsEmailVerified:            false,
 		EmailVerificationToken:     &verToken,
 		EmailVerificationExpiresAt: &verExpires,
 	}
-
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		return nil, err
 	}
 
-	// Create B2B Profile if applicable
-	var b2bDto *dto.B2BProfileDTO
 	if req.IsB2BRegistration {
-		b2bProfile := &models.B2BProfile{
-			UserID:              user.ID,
-			StoreName:           req.StoreName,
-			StoreAddress:        req.StoreAddress,
-			TaxID:               req.TaxID,
-			VerificationStatus:  constants.B2BStatusPending,
-			ApprovedCreditLimit: 0,
-		}
-		if err := s.b2bProfileRepo.Create(ctx, b2bProfile); err != nil {
+		if err := s.b2bProfileRepo.Create(ctx, &models.B2BProfile{
+			UserID:             user.ID,
+			StoreName:          strings.TrimSpace(req.StoreName),
+			StoreAddress:       strings.TrimSpace(req.StoreAddress),
+			TaxID:              req.TaxID,
+			VerificationStatus: constants.B2BStatusPending,
+		}); err != nil {
 			return nil, err
 		}
-		b2bDto = &dto.B2BProfileDTO{
-			ID:                  b2bProfile.ID,
-			UserID:              b2bProfile.UserID,
-			StoreName:           b2bProfile.StoreName,
-			StoreAddress:        b2bProfile.StoreAddress,
-			TaxID:               b2bProfile.TaxID,
-			VerificationStatus:  b2bProfile.VerificationStatus,
-			ApprovedCreditLimit: b2bProfile.ApprovedCreditLimit,
-			CreatedAt:           b2bProfile.CreatedAt,
-		}
+		publishEvent(s.bus, "B2B_REGISTERED", "USER", user.ID, map[string]interface{}{
+			"notify_staff":  true,
+			"staff_title":   "Pendaftaran mitra toko baru",
+			"staff_message": user.FullName + " (" + req.StoreName + ") mendaftar sebagai mitra toko. Mohon diverifikasi di menu Pengguna.",
+		})
 	}
 
-	// Issue JWT Tokens
-	tokenPair, err := s.jwtService.GenerateTokenPair(user.ID, user.Role)
-	if err != nil {
-		return nil, err
-	}
-
-	// Store Refresh Token Hash
-	s.saveRefreshTokenHash(ctx, user.ID, tokenPair.RefreshToken)
-
-	return &dto.AuthResponseDTO{
-		AccessToken:  tokenPair.AccessToken,
-		RefreshToken: tokenPair.RefreshToken,
-		TokenType:    tokenPair.TokenType,
-		ExpiresIn:    tokenPair.ExpiresIn,
-		User: dto.UserProfileResponse{
-			ID:              user.ID,
-			FullName:        user.FullName,
-			Email:           user.Email,
-			PhoneNumber:     user.PhoneNumber,
-			Role:            user.Role,
-			IsActive:        user.IsActive,
-			IsEmailVerified: user.IsEmailVerified,
-			B2BProfile:      b2bDto,
-		},
-	}, nil
+	return s.issueTokens(ctx, user.ID)
 }
 
 func (s *authService) Login(ctx context.Context, req dto.LoginDTO, ipAddress, userAgent, device string) (*dto.AuthResponseDTO, error) {
@@ -178,6 +154,30 @@ func (s *authService) Login(ctx context.Context, req dto.LoginDTO, ipAddress, us
 		return nil, err
 	}
 	if user == nil {
+		// Hash anyway so response time does not reveal whether the number exists.
+		_ = helpers.CheckPasswordHash(req.Password, dummyPasswordHash)
+		return nil, ErrInvalidCredentials
+	}
+
+	history := &models.LoginHistory{UserID: user.ID, IPAddress: ipAddress, UserAgent: userAgent, Device: device}
+
+	if user.IsLockedOut() {
+		history.Status = "LOCKED"
+		_ = s.loginHistoryRepo.Create(ctx, history)
+		return nil, ErrAccountLocked
+	}
+
+	if !helpers.CheckPasswordHash(req.Password, user.PasswordHash) {
+		user.FailedLoginAttempts++
+		if user.FailedLoginAttempts >= maxFailedLogins {
+			lockUntil := time.Now().Add(lockoutDuration)
+			user.LockoutUntil = &lockUntil
+			user.FailedLoginAttempts = 0
+		}
+		_ = s.userRepo.Update(ctx, user)
+
+		history.Status = "FAILED"
+		_ = s.loginHistoryRepo.Create(ctx, history)
 		return nil, ErrInvalidCredentials
 	}
 
@@ -185,92 +185,16 @@ func (s *authService) Login(ctx context.Context, req dto.LoginDTO, ipAddress, us
 		return nil, ErrUserInactive
 	}
 
-	// Check Account Lockout
-	if user.IsLockedOut() {
-		_ = s.loginHistoryRepo.Create(ctx, &models.LoginHistory{
-			UserID:    user.ID,
-			IPAddress: ipAddress,
-			UserAgent: userAgent,
-			Device:    device,
-			Status:    "LOCKED",
-		})
-		return nil, ErrAccountLocked
-	}
-
-	// Validate Password
-	if !helpers.CheckPasswordHash(req.Password, user.PasswordHash) {
-		user.FailedLoginAttempts++
-		if user.FailedLoginAttempts >= 5 {
-			lockUntil := time.Now().Add(15 * time.Minute)
-			user.LockoutUntil = &lockUntil
-		}
-		_ = s.userRepo.Update(ctx, user)
-
-		_ = s.loginHistoryRepo.Create(ctx, &models.LoginHistory{
-			UserID:    user.ID,
-			IPAddress: ipAddress,
-			UserAgent: userAgent,
-			Device:    device,
-			Status:    "FAILED",
-		})
-		return nil, ErrInvalidCredentials
-	}
-
-	// Login Success: Reset Lockout Counters & Update LastLogin
 	now := time.Now()
 	user.FailedLoginAttempts = 0
 	user.LockoutUntil = nil
 	user.LastLoginAt = &now
 	_ = s.userRepo.Update(ctx, user)
 
-	_ = s.loginHistoryRepo.Create(ctx, &models.LoginHistory{
-		UserID:    user.ID,
-		IPAddress: ipAddress,
-		UserAgent: userAgent,
-		Device:    device,
-		Status:    "SUCCESS",
-	})
+	history.Status = "SUCCESS"
+	_ = s.loginHistoryRepo.Create(ctx, history)
 
-	// Issue Tokens
-	tokenPair, err := s.jwtService.GenerateTokenPair(user.ID, user.Role)
-	if err != nil {
-		return nil, err
-	}
-
-	s.saveRefreshTokenHash(ctx, user.ID, tokenPair.RefreshToken)
-
-	var b2bDto *dto.B2BProfileDTO
-	if user.B2BProfile != nil {
-		b2bDto = &dto.B2BProfileDTO{
-			ID:                  user.B2BProfile.ID,
-			UserID:              user.B2BProfile.UserID,
-			StoreName:           user.B2BProfile.StoreName,
-			StoreAddress:        user.B2BProfile.StoreAddress,
-			TaxID:               user.B2BProfile.TaxID,
-			VerificationStatus:  user.B2BProfile.VerificationStatus,
-			ApprovedCreditLimit: user.B2BProfile.ApprovedCreditLimit,
-			CreatedAt:           user.B2BProfile.CreatedAt,
-		}
-	}
-
-	return &dto.AuthResponseDTO{
-		AccessToken:  tokenPair.AccessToken,
-		RefreshToken: tokenPair.RefreshToken,
-		TokenType:    tokenPair.TokenType,
-		ExpiresIn:    tokenPair.ExpiresIn,
-		User: dto.UserProfileResponse{
-			ID:              user.ID,
-			FullName:        user.FullName,
-			Email:           user.Email,
-			PhoneNumber:     user.PhoneNumber,
-			Role:            user.Role,
-			IsActive:        user.IsActive,
-			IsEmailVerified: user.IsEmailVerified,
-			AvatarURL:       user.AvatarURL,
-			LastLoginAt:     user.LastLoginAt,
-			B2BProfile:      b2bDto,
-		},
-	}, nil
+	return s.issueTokens(ctx, user.ID)
 }
 
 func (s *authService) RefreshToken(ctx context.Context, req dto.RefreshTokenDTO) (*dto.AuthResponseDTO, error) {
@@ -279,13 +203,12 @@ func (s *authService) RefreshToken(ctx context.Context, req dto.RefreshTokenDTO)
 		return nil, ErrInvalidToken
 	}
 
-	hash := hashTokenString(req.RefreshToken)
-	storedToken, err := s.refreshTokenRepo.FindByTokenHash(ctx, hash)
-	if err != nil || storedToken == nil {
+	storedToken, err := s.refreshTokenRepo.FindByTokenHash(ctx, hashTokenString(req.RefreshToken))
+	if err != nil || storedToken == nil || storedToken.UserID != claims.UserID {
 		return nil, ErrInvalidToken
 	}
 
-	// Refresh Token Rotation: Revoke current refresh token
+	// Refresh token rotation: each refresh token can be used only once.
 	_ = s.refreshTokenRepo.RevokeToken(ctx, storedToken.ID)
 
 	user, err := s.userRepo.FindByID(ctx, claims.UserID)
@@ -293,27 +216,34 @@ func (s *authService) RefreshToken(ctx context.Context, req dto.RefreshTokenDTO)
 		return nil, ErrUserInactive
 	}
 
-	newTokenPair, err := s.jwtService.GenerateTokenPair(user.ID, user.Role)
+	return s.issueTokens(ctx, user.ID)
+}
+
+func (s *authService) issueTokens(ctx context.Context, userID uuid.UUID) (*dto.AuthResponseDTO, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil || user == nil {
+		return nil, ErrUserNotFound
+	}
+
+	pair, err := s.jwtService.GenerateTokenPair(user.ID, user.Role)
 	if err != nil {
 		return nil, err
 	}
 
-	s.saveRefreshTokenHash(ctx, user.ID, newTokenPair.RefreshToken)
+	if err := s.refreshTokenRepo.Create(ctx, &models.RefreshToken{
+		UserID:    user.ID,
+		TokenHash: hashTokenString(pair.RefreshToken),
+		ExpiresAt: time.Now().Add(s.refreshTTL),
+	}); err != nil {
+		return nil, err
+	}
 
 	return &dto.AuthResponseDTO{
-		AccessToken:  newTokenPair.AccessToken,
-		RefreshToken: newTokenPair.RefreshToken,
-		TokenType:    newTokenPair.TokenType,
-		ExpiresIn:    newTokenPair.ExpiresIn,
-		User: dto.UserProfileResponse{
-			ID:              user.ID,
-			FullName:        user.FullName,
-			Email:           user.Email,
-			PhoneNumber:     user.PhoneNumber,
-			Role:            user.Role,
-			IsActive:        user.IsActive,
-			IsEmailVerified: user.IsEmailVerified,
-		},
+		AccessToken:  pair.AccessToken,
+		RefreshToken: pair.RefreshToken,
+		TokenType:    pair.TokenType,
+		ExpiresIn:    pair.ExpiresIn,
+		User:         mapUserToProfile(user),
 	}, nil
 }
 
@@ -323,48 +253,61 @@ func (s *authService) Logout(ctx context.Context, userID uuid.UUID) error {
 
 func (s *authService) GetCurrentUser(ctx context.Context, userID uuid.UUID) (*dto.UserProfileResponse, error) {
 	user, err := s.userRepo.FindByID(ctx, userID)
-	if err != nil || user == nil {
-		return nil, errors.New("user profile not found")
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrUserNotFound
+	}
+	res := mapUserToProfile(user)
+	return &res, nil
+}
+
+func (s *authService) UpdateProfile(ctx context.Context, userID uuid.UUID, req dto.UpdateProfileDTO) (*dto.UserProfileResponse, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrUserNotFound
 	}
 
-	var b2bDto *dto.B2BProfileDTO
-	if user.B2BProfile != nil {
-		b2bDto = &dto.B2BProfileDTO{
-			ID:                  user.B2BProfile.ID,
-			UserID:              user.B2BProfile.UserID,
-			StoreName:           user.B2BProfile.StoreName,
-			StoreAddress:        user.B2BProfile.StoreAddress,
-			TaxID:               user.B2BProfile.TaxID,
-			VerificationStatus:  user.B2BProfile.VerificationStatus,
-			ApprovedCreditLimit: user.B2BProfile.ApprovedCreditLimit,
-			CreatedAt:           user.B2BProfile.CreatedAt,
+	if req.FullName != nil {
+		user.FullName = strings.TrimSpace(*req.FullName)
+	}
+	if req.Email != nil {
+		email := strings.TrimSpace(*req.Email)
+		if email == "" {
+			user.Email = nil
+		} else if user.Email == nil || *user.Email != email {
+			if other, err := s.userRepo.FindByEmail(ctx, email); err != nil {
+				return nil, err
+			} else if other != nil && other.ID != user.ID {
+				return nil, ErrEmailAlreadyExists
+			}
+			user.Email = &email
+			user.IsEmailVerified = false
 		}
 	}
 
-	return &dto.UserProfileResponse{
-		ID:              user.ID,
-		FullName:        user.FullName,
-		Email:           user.Email,
-		PhoneNumber:     user.PhoneNumber,
-		Role:            user.Role,
-		IsActive:        user.IsActive,
-		IsEmailVerified: user.IsEmailVerified,
-		AvatarURL:       user.AvatarURL,
-		LastLoginAt:     user.LastLoginAt,
-		B2BProfile:      b2bDto,
-	}, nil
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return nil, err
+	}
+	return s.GetCurrentUser(ctx, userID)
 }
 
 func (s *authService) ChangePassword(ctx context.Context, userID uuid.UUID, req dto.ChangePasswordDTO) error {
 	user, err := s.userRepo.FindByID(ctx, userID)
-	if err != nil || user == nil {
-		return errors.New("user not found")
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return ErrUserNotFound
 	}
 
 	if !helpers.CheckPasswordHash(req.OldPassword, user.PasswordHash) {
-		return errors.New("incorrect old password")
+		return errors.New("kata sandi lama salah")
 	}
-
 	if err := helpers.ValidatePasswordStrength(req.NewPassword); err != nil {
 		return err
 	}
@@ -378,31 +321,39 @@ func (s *authService) ChangePassword(ctx context.Context, userID uuid.UUID, req 
 	return s.userRepo.Update(ctx, user)
 }
 
-func (s *authService) ForgotPassword(ctx context.Context, req dto.ForgotPasswordDTO) (string, error) {
+// ForgotPassword creates a reset token for the account. The token is never
+// returned to the caller: it must reach the customer through a channel only
+// they control (WhatsApp/SMS/email), which is not connected yet. Until then
+// the store resets passwords from the admin dashboard. The response is the
+// same whether or not the number exists, so it cannot be used to discover
+// registered numbers.
+func (s *authService) ForgotPassword(ctx context.Context, req dto.ForgotPasswordDTO) error {
 	user, err := s.userRepo.FindByPhoneNumber(ctx, req.PhoneNumber)
 	if err != nil || user == nil {
-		return "", errors.New("user with specified phone number not found")
+		return nil
 	}
 
 	resetToken := uuid.New().String()
 	expiresAt := time.Now().Add(1 * time.Hour)
-
 	user.PasswordResetToken = &resetToken
 	user.PasswordResetExpiresAt = &expiresAt
-
 	if err := s.userRepo.Update(ctx, user); err != nil {
-		return "", err
+		return err
 	}
 
-	return resetToken, nil
+	publishEvent(s.bus, "PASSWORD_RESET_REQUESTED", "USER", user.ID, map[string]interface{}{
+		"notify_staff":  true,
+		"staff_title":   "Permintaan reset kata sandi",
+		"staff_message": user.FullName + " (" + user.PhoneNumber + ") meminta reset kata sandi. Verifikasi identitasnya lalu reset dari menu Pengguna.",
+	})
+	return nil
 }
 
 func (s *authService) ResetPassword(ctx context.Context, req dto.ResetPasswordDTO) error {
 	user, err := s.userRepo.FindByPasswordResetToken(ctx, req.ResetToken)
 	if err != nil || user == nil {
-		return errors.New("invalid or expired password reset token")
+		return errors.New("token reset tidak valid atau sudah kedaluwarsa")
 	}
-
 	if err := helpers.ValidatePasswordStrength(req.NewPassword); err != nil {
 		return err
 	}
@@ -415,35 +366,31 @@ func (s *authService) ResetPassword(ctx context.Context, req dto.ResetPasswordDT
 	user.PasswordHash = newHash
 	user.PasswordResetToken = nil
 	user.PasswordResetExpiresAt = nil
-
-	return s.userRepo.Update(ctx, user)
+	user.FailedLoginAttempts = 0
+	user.LockoutUntil = nil
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return err
+	}
+	return s.refreshTokenRepo.RevokeByUserID(ctx, user.ID)
 }
 
 func (s *authService) VerifyEmail(ctx context.Context, req dto.VerifyEmailDTO) error {
 	user, err := s.userRepo.FindByEmailVerificationToken(ctx, req.Token)
 	if err != nil || user == nil {
-		return errors.New("invalid or expired email verification token")
+		return errors.New("token verifikasi email tidak valid atau sudah kedaluwarsa")
 	}
 
 	user.IsEmailVerified = true
 	user.EmailVerificationToken = nil
 	user.EmailVerificationExpiresAt = nil
-
 	return s.userRepo.Update(ctx, user)
-}
-
-func (s *authService) saveRefreshTokenHash(ctx context.Context, userID uuid.UUID, refreshTokenStr string) {
-	hash := hashTokenString(refreshTokenStr)
-	tokenRecord := &models.RefreshToken{
-		UserID:    userID,
-		TokenHash: hash,
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
-		IsRevoked: false,
-	}
-	_ = s.refreshTokenRepo.Create(ctx, tokenRecord)
 }
 
 func hashTokenString(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
 }
+
+// dummyPasswordHash is compared against when a phone number is unknown so a
+// failed login takes the same time whether or not the account exists.
+var dummyPasswordHash, _ = helpers.HashPassword("lucky-mart-timing-equalizer")

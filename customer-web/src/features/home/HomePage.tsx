@@ -5,46 +5,20 @@ import { ProductCard } from '../../components/product/ProductCard';
 import { LoadingSkeleton } from '../../components/common/LoadingSkeleton';
 import { ArrowRight, Flame, ShieldCheck, Truck, Sparkles, Store } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import type { Category, Product } from '../../types';
 
 export const HomePage: React.FC = () => {
-  const [products, setProducts] = useState<any[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadData = async (isInitial = false) => {
-    if (isInitial) setLoading(true);
-
-    try {
-      const prodRes = await productService.getProducts(1, 50);
-      const fetchedProds = Array.isArray(prodRes.data)
-        ? prodRes.data
-        : (prodRes.data?.items || (Array.isArray(prodRes) ? prodRes : []));
-      setProducts(fetchedProds);
-    } catch (e) {
-      if (isInitial) setProducts([]);
-    }
-
-    try {
-      const catRes = await productService.getCategories();
-      const fetchedCats = Array.isArray(catRes.data)
-        ? catRes.data
-        : (Array.isArray(catRes) ? catRes : []);
-      setCategories(fetchedCats);
-    } catch (e) {
-      if (isInitial) setCategories([]);
-    }
-
-    if (isInitial) setLoading(false);
-  };
-
   useEffect(() => {
-    loadData(true);
-
-    const interval = setInterval(() => {
-      loadData(false);
-    }, 3000);
-
-    return () => clearInterval(interval);
+    Promise.allSettled([productService.getProducts({ limit: 12 }), productService.getCategories()])
+      .then(([prod, cats]) => {
+        if (prod.status === 'fulfilled') setProducts(prod.value.items);
+        if (cats.status === 'fulfilled') setCategories(cats.value);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   return (
@@ -55,7 +29,7 @@ export const HomePage: React.FC = () => {
           <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
             <span className="inline-flex items-center space-x-2 rounded-full bg-primary-500/20 px-3.5 py-1 text-xs font-bold text-primary-300 border border-primary-500/30">
               <Sparkles className="h-4 w-4" />
-              <span>Platform LuckyMart #1 Usaha Keluarga</span>
+              <span>Toko Sembako Keluarga</span>
             </span>
             <h1 className="text-3xl sm:text-5xl font-black tracking-tight leading-tight">
               Belanja Sembako Lengkap, Segar & Harga Grosir Direct!
@@ -151,7 +125,7 @@ export const HomePage: React.FC = () => {
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center space-x-2">
             <Flame className="h-5 w-5 text-rose-500 fill-rose-500" />
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Produk Terlaris Minggu Ini</h2>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Produk Pilihan</h2>
           </div>
         </div>
 

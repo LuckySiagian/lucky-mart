@@ -1,611 +1,338 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { toast } from 'sonner';
+import { Edit3, ImageOff, Plus, Trash2, X } from 'lucide-react';
 import { PageHeader } from '../../components/common/PageHeader';
+import { StatusBadge } from '../../components/common/StatusBadge';
 import { LoadingSkeleton } from '../../components/common/LoadingSkeleton';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorState } from '../../components/common/ErrorState';
+import { Field, Modal, btnDanger, btnPrimary, btnSecondary, inputClass } from '../../components/common/Modal';
+import { Card, Pagination, SearchInput, Table } from '../../components/common/Pagination';
 import { productService } from '../../services/apiServices';
-import { formatCurrency } from '../../lib/utils';
-import { Plus, Search, Package, X, Loader2, Edit3, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { useList } from '../../hooks/useList';
+import { useAuthStore, MANAGER_ROLES, hasRole } from '../../store/useAuthStore';
+import { formatCurrency, formatNumber, getErrorMessage } from '../../lib/utils';
+import type { Category, Product } from '../../types';
+
+interface UnitForm {
+  id?: string;
+  unit_name: string;
+  retail_price: string;
+  wholesale_price: string;
+  min_wholesale_qty: string;
+  stock: string;
+}
+
+const emptyUnit = (): UnitForm => ({ unit_name: 'Pcs', retail_price: '', wholesale_price: '', min_wholesale_qty: '5', stock: '0' });
 
 export const ProductListPage: React.FC = () => {
-  const [products, setProducts] = useState<any[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-
-  // Modal Create/Edit State
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<any | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  // Form Fields State
-  const [formData, setFormData] = useState({
-    name: '',
-    sku: '',
-    category_id: '',
-    description: '',
-    unit_name: 'Pcs',
-    retail_price: '',
-    wholesale_price: '',
-    initial_stock: '100',
-    image_url: '',
-  });
-
-  const fetchProducts = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await productService.getProducts(1, 100);
-      const items = Array.isArray(res.data)
-        ? res.data
-        : (res.data?.items || (Array.isArray(res) ? res : []));
-      setProducts(items);
-    } catch (err: any) {
-      setError(err.message || 'Gagal memuat produk dari server database.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchCategories = async () => {
-    try {
-      const res = await productService.getCategories();
-      const items = Array.isArray(res.data)
-        ? res.data
-        : (Array.isArray(res) ? res : []);
-
-      setCategories(items);
-      if (items.length > 0 && !formData.category_id) {
-        setFormData((prev) => ({ ...prev, category_id: items[0].id }));
-      }
-    } catch (e) {}
-  };
+  const canEdit = hasRole(useAuthStore((s) => s.user), MANAGER_ROLES);
+  const list = useList((p) => productService.getProducts(p));
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [editing, setEditing] = useState<Product | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [deleting, setDeleting] = useState<Product | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ name: '', sku: '', category_id: '', description: '', image_url: '', is_active: true });
+  const [units, setUnits] = useState<UnitForm[]>([emptyUnit()]);
 
   useEffect(() => {
-    fetchProducts();
-    fetchCategories();
+    productService.getCategories().then(setCategories).catch(() => toast.error('Gagal memuat kategori'));
   }, []);
 
-  const handleOpenAdd = () => {
-    fetchCategories();
-    setEditingProduct(null);
-    const defaultSKU = `SKU-${Date.now().toString().slice(-6)}`;
-    setFormData({
-      name: '',
-      sku: defaultSKU,
-      category_id: categories.length > 0 ? categories[0].id : '',
-      description: '',
-      unit_name: 'Pcs',
-      retail_price: '',
-      wholesale_price: '',
-      initial_stock: '100',
-      image_url: '',
-    });
-    setIsModalOpen(true);
+  const openCreate = () => {
+    setEditing(null);
+    setForm({ name: '', sku: '', category_id: categories[0]?.id || '', description: '', image_url: '', is_active: true });
+    setUnits([emptyUnit()]);
+    setFormOpen(true);
   };
 
-  const handleOpenEdit = (p: any) => {
-    setEditingProduct(p);
-    const unit = p.product_units?.[0] || p.units?.[0];
-    const image = p.images?.[0]?.image_url || '';
-    setFormData({
-      name: p.name || '',
-      sku: p.sku || '',
-      category_id: p.category_id || (categories.length > 0 ? categories[0].id : ''),
-      description: p.description || '',
-      unit_name: unit?.unit_name || 'Pcs',
-      retail_price: unit?.retail_price ? unit.retail_price.toString() : '',
-      wholesale_price: unit?.wholesale_price ? unit.wholesale_price.toString() : '',
-      initial_stock: unit?.stock_quantity ? unit.stock_quantity.toString() : '100',
-      image_url: image,
-    });
-    setIsModalOpen(true);
-  };
-
-  const handleDeleteProduct = async (id: string, name: string) => {
-    if (window.confirm(`Apakah Anda yakin ingin menghapus produk "${name}" dari katalog?`)) {
-      try {
-        await productService.deleteProduct(id);
-        toast.success(`Produk "${name}" berhasil dihapus!`);
-        fetchProducts();
-      } catch (e: any) {
-        toast.error(`Gagal menghapus produk: ${e.message || 'Error'}`);
-      }
-      setSelectedIds((prev) => prev.filter((item) => item !== id));
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.name.trim() || !formData.sku.trim() || !formData.retail_price) {
-      toast.error('Mohon isi nama produk, SKU, dan harga eceran.');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      if (editingProduct) {
-        // UPDATE existing product
-        const payload = {
-          name: formData.name.trim(),
-          sku: formData.sku.trim(),
-          description: formData.description.trim(),
-          image_url: formData.image_url.trim(),
-          retail_price: parseFloat(formData.retail_price),
-          wholesale_price: parseFloat(formData.wholesale_price || formData.retail_price),
-          stock_quantity: parseInt(formData.initial_stock || '0', 10),
-        };
-
-        await productService.updateProduct(editingProduct.id, payload);
-        toast.success(`Produk "${formData.name}" berhasil diperbarui!`);
-      } else {
-        // CREATE new product
-        const payload = {
-          name: formData.name.trim(),
-          sku: formData.sku.trim(),
-          category_id: formData.category_id || (categories[0]?.id || 'cat-1'),
-          description: formData.description.trim(),
-          image_url: formData.image_url.trim(),
-          units: [
-            {
-              unit_id: '00000000-0000-0000-0000-000000000001',
-              unit_name: formData.unit_name.trim() || 'Pcs',
-              conversion_factor: 1,
-              retail_price: parseFloat(formData.retail_price),
-              wholesale_price: parseFloat(formData.wholesale_price || formData.retail_price),
-              min_wholesale_qty: 5,
-              initial_stock: parseInt(formData.initial_stock || '0', 10),
-            },
-          ],
-        };
-
-        await productService.createProduct(payload);
-        toast.success(`Produk "${formData.name}" berhasil ditambahkan ke Database & Customer Web!`);
-      }
-      setIsModalOpen(false);
-      await fetchProducts();
-    } catch (err: any) {
-      const msg = err.response?.data?.message || err.message || 'Gagal menyimpan produk ke database.';
-      toast.error(`Gagal: ${msg}`);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const filteredProducts = Array.isArray(products)
-    ? products.filter((p) =>
-        p.name?.toLowerCase().includes(search.toLowerCase()) || p.sku?.toLowerCase().includes(search.toLowerCase())
-      )
-    : [];
-
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-
-  const handleSelectAll = () => {
-    if (selectedIds.length === filteredProducts.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(filteredProducts.map((p) => p.id));
-    }
-  };
-
-  const handleSelectRow = (id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+  const openEdit = (p: Product) => {
+    setEditing(p);
+    setForm({ name: p.name, sku: p.sku, category_id: p.category_id, description: p.description || '', image_url: p.image_url || '', is_active: p.is_active });
+    setUnits(
+      p.units.map((u) => ({
+        id: u.id,
+        unit_name: u.unit_name,
+        retail_price: String(u.retail_price),
+        wholesale_price: String(u.wholesale_price),
+        min_wholesale_qty: String(u.min_wholesale_qty),
+        stock: String(u.stock_quantity),
+      }))
     );
+    setFormOpen(true);
   };
 
-  const handleBulkDelete = async () => {
-    if (selectedIds.length === 0) return;
-    if (window.confirm(`Apakah Anda yakin ingin menghapus ${selectedIds.length} produk terpilih sekaligus dari katalog?`)) {
-      const idsToDelete = [...selectedIds];
-      setLoading(true);
-      
-      for (const id of idsToDelete) {
-        try {
-          await productService.deleteProduct(id);
-        } catch (e) {}
-      }
+  const updateUnit = (i: number, patch: Partial<UnitForm>) => setUnits((us) => us.map((u, idx) => (idx === i ? { ...u, ...patch } : u)));
 
-      toast.success(`Berhasil menghapus ${idsToDelete.length} produk terpilih!`);
-      setSelectedIds([]);
-      await fetchProducts();
+  const submit = async () => {
+    if (form.name.trim().length < 2) return toast.error('Nama produk wajib diisi.');
+    if (!form.category_id) return toast.error('Pilih kategori. Buat kategori dulu jika belum ada.');
+    for (const u of units) {
+      if (!u.unit_name.trim() || !(Number(u.retail_price) > 0)) return toast.error('Setiap satuan wajib punya nama dan harga eceran.');
+    }
+
+    setBusy(true);
+    try {
+      if (editing) {
+        await productService.updateProduct(editing.id, {
+          name: form.name.trim(),
+          sku: form.sku.trim() || undefined,
+          category_id: form.category_id,
+          description: form.description.trim(),
+          image_url: form.image_url.trim(),
+          is_active: form.is_active,
+          units: units.map((u) => ({
+            id: u.id,
+            unit_name: u.unit_name.trim(),
+            retail_price: Number(u.retail_price),
+            wholesale_price: Number(u.wholesale_price) || Number(u.retail_price),
+            min_wholesale_qty: Number(u.min_wholesale_qty) || 1,
+            stock_quantity: Number(u.stock) || 0,
+          })),
+        });
+        toast.success('Produk diperbarui.');
+      } else {
+        await productService.createProduct({
+          name: form.name.trim(),
+          sku: form.sku.trim() || undefined,
+          category_id: form.category_id,
+          description: form.description.trim(),
+          image_url: form.image_url.trim() || undefined,
+          units: units.map((u) => ({
+            unit_name: u.unit_name.trim(),
+            retail_price: Number(u.retail_price),
+            wholesale_price: Number(u.wholesale_price) || undefined,
+            min_wholesale_qty: Number(u.min_wholesale_qty) || undefined,
+            initial_stock: Number(u.stock) || 0,
+          })),
+        });
+        toast.success('Produk ditambahkan dan langsung tampil di toko.');
+      }
+      setFormOpen(false);
+      list.reload();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    setBusy(true);
+    try {
+      await productService.deleteProduct(deleting.id);
+      toast.success('Produk dihapus dari katalog.');
+      setDeleting(null);
+      list.reload();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Katalog Produk Sembako"
-        subtitle="Kelola seluruh barang, variasi satuan, harga eceran & grosir."
-      >
-        <div className="flex items-center space-x-3">
-          {selectedIds.length > 0 && (
-            <button
-              onClick={handleBulkDelete}
-              className="inline-flex items-center space-x-1.5 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 transition-colors shadow-lg shadow-rose-600/20 animate-in fade-in duration-150"
-            >
-              <Trash2 className="h-4 w-4" />
-              <span>Hapus ({selectedIds.length}) Produk</span>
-            </button>
-          )}
-          <button
-            onClick={handleOpenAdd}
-            className="inline-flex items-center space-x-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition-colors shadow-lg shadow-brand-600/20"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Tambah Produk</span>
+    <div className="space-y-5">
+      <PageHeader title="Produk" subtitle="Katalog barang, satuan, harga eceran dan grosir.">
+        {canEdit && (
+          <button className={btnPrimary} onClick={openCreate}>
+            <Plus className="h-4 w-4" /> Tambah Produk
           </button>
-        </div>
+        )}
       </PageHeader>
 
-      {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
-        <div className="relative w-full sm:w-80">
-          <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari nama produk atau SKU..."
-            className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 pl-10 pr-4 py-2 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-        <div className="flex items-center space-x-4 text-xs text-slate-500 font-semibold">
-          {selectedIds.length > 0 && (
-            <span className="text-rose-600 font-bold bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 rounded-lg">
-              {selectedIds.length} Terpilih
-            </span>
-          )}
-          <div>
-            Total Produk: <span className="text-brand-600 font-bold">{filteredProducts.length}</span>
-          </div>
-        </div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <SearchInput value={list.searchInput} onChange={list.setSearchInput} placeholder="Cari nama / SKU..." />
+        <select
+          className={`${inputClass} sm:w-60`}
+          value={(list.params.category_id as string) || ''}
+          onChange={(e) => list.setFilter('category_id', e.target.value)}
+        >
+          <option value="">Semua kategori</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
       </div>
 
-      {loading ? (
-        <LoadingSkeleton count={4} />
-      ) : error ? (
-        <ErrorState message={error} onRetry={fetchProducts} />
-      ) : filteredProducts.length === 0 ? (
-        <EmptyState title="Tidak ada produk ditemukan" description="Cobalah mengubah kriteria pencarian atau tambahkan produk baru." />
+      {list.loading ? (
+        <LoadingSkeleton count={6} />
+      ) : list.error ? (
+        <ErrorState message={list.error} onRetry={list.reload} />
+      ) : list.items.length === 0 ? (
+        <EmptyState title="Belum ada produk" actionText={canEdit ? 'Tambah Produk' : undefined} onAction={canEdit ? openCreate : undefined} />
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
-          <table className="w-full text-left text-sm text-slate-600 dark:text-slate-400">
-            <thead className="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-slate-500 font-bold border-b border-slate-200 dark:border-slate-800">
+        <Card className="p-2 sm:p-4">
+          <Table
+            head={
               <tr>
-                <th className="px-6 py-4">Produk / SKU</th>
-                <th className="px-6 py-4">Kategori</th>
-                <th className="px-6 py-4">Satuan & Harga</th>
-                <th className="px-6 py-4">Total Stok</th>
-                <th className="px-6 py-4">Status</th>
-                <th className="px-4 py-4 w-12 text-center">
-                  <input
-                    type="checkbox"
-                    checked={filteredProducts.length > 0 && selectedIds.length === filteredProducts.length}
-                    onChange={handleSelectAll}
-                    className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
-                    title="Pilih Semua"
-                  />
-                </th>
-                <th className="px-6 py-4 text-right">Aksi (CRUD)</th>
+                <th className="px-3 py-3">Produk</th>
+                <th className="px-3 py-3">Kategori</th>
+                <th className="px-3 py-3">Harga</th>
+                <th className="px-3 py-3 text-right">Stok</th>
+                <th className="px-3 py-3">Status</th>
+                <th className="px-3 py-3" />
               </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {filteredProducts.map((p) => {
-                const units = (p.units && p.units.length > 0) ? p.units : (p.product_units && p.product_units.length > 0) ? p.product_units : [];
-                const primaryUnit = units[0];
-                const totalStock = units.reduce((acc: number, u: any) => acc + (u.stock_quantity || 0), 0);
-
-                return (
-                  <tr
-                    key={p.id}
-                    className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/30 transition-colors ${
-                      selectedIds.includes(p.id) ? 'bg-brand-50/50 dark:bg-brand-950/20' : ''
-                    }`}
-                  >
-                    <td className="px-6 py-4">
-                      <div className="flex items-center space-x-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 overflow-hidden">
-                          {p.images && p.images.length > 0 ? (
-                            <img src={p.images[0].image_url} alt={p.name} className="h-10 w-10 object-cover" />
-                          ) : (
-                            <Package className="h-5 w-5" />
-                          )}
-                        </div>
-                        <div>
-                          <div className="font-bold text-slate-900 dark:text-white">{p.name}</div>
-                          <div className="text-xs text-slate-400">SKU: {p.sku}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 font-medium text-slate-700 dark:text-slate-300">
-                      {p.category?.name || 'Sembako Utama'}
-                    </td>
-                    <td className="px-6 py-4">
-                      {primaryUnit ? (
-                        <div className="space-y-1">
-                          <div className="text-xs font-semibold text-slate-900 dark:text-white">
-                            {primaryUnit.unit_name}: {formatCurrency(primaryUnit.retail_price)}
-                          </div>
-                          <div className="text-[11px] text-brand-600 font-medium">
-                            Grosir: {formatCurrency(primaryUnit.wholesale_price)} (Min {primaryUnit.min_wholesale_qty || 5})
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400">-</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="font-bold text-slate-900 dark:text-white">
-                        {totalStock}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${p.is_active !== false ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-400' : 'bg-rose-100 text-rose-800'}`}>
-                        {p.is_active !== false ? 'Aktif' : 'Non-Aktif'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 text-center">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(p.id)}
-                        onChange={() => handleSelectRow(p.id)}
-                        className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
-                      />
-                    </td>
-                    <td className="px-6 py-4 text-right space-x-2">
-                      <button
-                        onClick={() => handleOpenEdit(p)}
-                        className="inline-flex items-center space-x-1 rounded-lg bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-xs font-bold text-brand-600 hover:bg-brand-600 hover:text-white transition-colors"
-                      >
-                        <Edit3 className="h-3.5 w-3.5" />
-                        <span>Edit</span>
+            }
+          >
+            {list.items.map((p) => (
+              <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                <td className="px-3 py-3">
+                  <div className="flex items-center gap-3">
+                    {p.image_url ? (
+                      <img src={p.image_url} alt="" className="h-11 w-11 flex-shrink-0 rounded-xl object-cover bg-slate-100" />
+                    ) : (
+                      <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-400"><ImageOff className="h-4 w-4" /></div>
+                    )}
+                    <div>
+                      <div className="font-semibold">{p.name}</div>
+                      <div className="font-mono text-[11px] text-slate-500">{p.sku}</div>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-3 py-3 text-xs">{p.category?.name}</td>
+                <td className="px-3 py-3 text-xs">
+                  {p.units.map((u) => (
+                    <div key={u.id}>
+                      <b>{formatCurrency(u.retail_price)}</b> / {u.unit_name}
+                      {u.wholesale_price < u.retail_price && <span className="text-slate-500"> · grosir {formatCurrency(u.wholesale_price)} (≥{u.min_wholesale_qty})</span>}
+                    </div>
+                  ))}
+                </td>
+                <td className="px-3 py-3 text-right text-xs">
+                  {p.units.map((u) => (
+                    <div key={u.id} className={u.stock_quantity === 0 ? 'font-semibold text-rose-600' : ''}>{formatNumber(u.stock_quantity)} {u.unit_name}</div>
+                  ))}
+                </td>
+                <td className="px-3 py-3">{p.is_active ? <StatusBadge status="APPROVED" label="Tampil" /> : <StatusBadge status="CANCELLED" label="Disembunyikan" />}</td>
+                <td className="px-3 py-3">
+                  {canEdit && (
+                    <div className="flex justify-end gap-1">
+                      <button title="Ubah" onClick={() => openEdit(p)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+                        <Edit3 className="h-4 w-4" />
                       </button>
-                      <button
-                        onClick={() => handleDeleteProduct(p.id, p.name)}
-                        className="inline-flex items-center space-x-1 rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400 px-2.5 py-1 text-xs font-bold hover:bg-rose-200"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        <span>Hapus</span>
+                      <button title="Hapus" onClick={() => setDeleting(p)} className="rounded-lg p-2 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30">
+                        <Trash2 className="h-4 w-4" />
                       </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </Table>
+          <Pagination meta={list.meta} onPage={list.setPage} />
+        </Card>
       )}
 
-      {/* Modal Form Create/Edit Produk */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="relative w-full max-w-xl rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-6 animate-in fade-in zoom-in duration-200">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
-              <div className="flex items-center space-x-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-100 text-brand-600 dark:bg-brand-950/60">
-                  <Package className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                    {editingProduct ? 'Edit Data Produk' : 'Tambah Produk Baru'}
-                  </h3>
-                  <p className="text-xs text-slate-500">Perubahan akan langsung ter-update di Customer Web.</p>
-                </div>
-              </div>
-              <button onClick={() => setIsModalOpen(false)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Nama Produk *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Contoh: Beras Rojo Lele 5kg"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Kode SKU *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Contoh: BRS-001"
-                    value={formData.sku}
-                    onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Kategori Sembako *</label>
-                  <select
-                    required
-                    value={formData.category_id}
-                    onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  >
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Nama Satuan & Kemasan *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Contoh: Karung 5kg / Pouch 2L"
-                    value={formData.unit_name}
-                    onChange={(e) => setFormData({ ...formData, unit_name: e.target.value })}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Harga Eceran (Rp) *</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    required
-                    placeholder="75000"
-                    value={formData.retail_price}
-                    onChange={(e) => setFormData({ ...formData, retail_price: e.target.value.replace(/\D/g, '') })}
-                    onKeyDown={(e) => {
-                      if (!/[0-9]/.test(e.key) && !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', 'Home', 'End'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
-                        e.preventDefault();
-                      }
-                    }}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Harga Grosir (Rp)</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="70000"
-                    value={formData.wholesale_price}
-                    onChange={(e) => setFormData({ ...formData, wholesale_price: e.target.value.replace(/\D/g, '') })}
-                    onKeyDown={(e) => {
-                      if (!/[0-9]/.test(e.key) && !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', 'Home', 'End'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
-                        e.preventDefault();
-                      }
-                    }}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Stok Fisik</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="100"
-                    value={formData.initial_stock}
-                    onChange={(e) => setFormData({ ...formData, initial_stock: e.target.value.replace(/\D/g, '') })}
-                    onKeyDown={(e) => {
-                      if (!/[0-9]/.test(e.key) && !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', 'Home', 'End'].includes(e.key) && !e.ctrlKey && !e.metaKey) {
-                        e.preventDefault();
-                      }
-                    }}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
-                  />
-                </div>
-              </div>
-
-              {/* Upload File Foto atau Input URL */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Foto Gambar Produk (File JPG, PNG, WEBP / URL)
-                </label>
-                
-                <div className="flex flex-col sm:flex-row items-center gap-3">
-                  {/* Preview Thumbnail */}
-                  <div className="h-20 w-20 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden flex items-center justify-center flex-shrink-0 relative group">
-                    {formData.image_url ? (
-                      <img src={formData.image_url} alt="Preview" className="h-full w-full object-cover" />
-                    ) : (
-                      <Package className="h-8 w-8 text-slate-400" />
-                    )}
-                  </div>
-
-                  <div className="flex-1 space-y-2 w-full">
-                    {/* File Upload Input */}
-                    <div className="relative">
-                      <input
-                        type="file"
-                        id="product-image-upload"
-                        accept="image/png, image/jpeg, image/jpg, image/webp"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            if (file.size > 5 * 1024 * 1024) {
-                              toast.error('Ukuran file foto maksimal 5MB.');
-                              return;
-                            }
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                              if (typeof reader.result === 'string') {
-                                setFormData((prev) => ({ ...prev, image_url: reader.result as string }));
-                                toast.success(`File foto "${file.name}" berhasil diunggah!`);
-                              }
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }}
-                        className="hidden"
-                      />
-                      <label
-                        htmlFor="product-image-upload"
-                        className="inline-flex items-center justify-center space-x-2 w-full rounded-xl bg-brand-50 dark:bg-brand-950/40 border border-dashed border-brand-300 dark:border-brand-800 px-4 py-2.5 text-xs font-bold text-brand-600 hover:bg-brand-100 transition-colors cursor-pointer"
-                      >
-                        <Plus className="h-4 w-4" />
-                        <span>Pilih & Upload File Foto (JPG / PNG / WEBP)</span>
-                      </label>
-                    </div>
-
-                    {/* Fallback URL Input */}
-                    <input
-                      type="url"
-                      placeholder="Atau tempel URL gambar web di sini..."
-                      value={formData.image_url}
-                      onChange={(e) => setFormData({ ...formData, image_url: e.target.value })}
-                      className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Deskripsi Produk</label>
-                <textarea
-                  rows={2}
-                  placeholder="Deskripsi singkat keunggulan produk sembako..."
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
-                />
-              </div>
-
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-200 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="rounded-xl px-4 py-2.5 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="inline-flex items-center space-x-2 rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-brand-700 disabled:opacity-50 transition-colors shadow-lg shadow-brand-600/20"
-                >
-                  {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                  <span>{editingProduct ? 'Simpan Perubahan' : 'Simpan & Tayangkan Produk'}</span>
-                </button>
-              </div>
-            </form>
+      <Modal
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        size="lg"
+        title={editing ? `Ubah ${editing.name}` : 'Tambah produk'}
+        footer={
+          <>
+            <button className={btnSecondary} onClick={() => setFormOpen(false)}>Batal</button>
+            <button className={btnPrimary} disabled={busy} onClick={submit}>{busy ? 'Menyimpan...' : 'Simpan'}</button>
+          </>
+        }
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Field label="Nama produk">
+              <input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Misal: Beras Pandan Wangi 5kg" />
+            </Field>
+          </div>
+          <Field label="Kategori">
+            <select className={inputClass} value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+              <option value="">— Pilih —</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="SKU / kode barang" hint={editing ? undefined : 'Kosongkan untuk dibuat otomatis'}>
+            <input className={inputClass} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value.toUpperCase() })} />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label="Link foto produk" hint="Sementara berupa link gambar. Fitur unggah foto langsung menyusul.">
+              <input className={inputClass} value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://..." />
+            </Field>
+          </div>
+          <div className="sm:col-span-2">
+            <Field label="Deskripsi">
+              <textarea className={inputClass} rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            </Field>
           </div>
         </div>
-      )}
+
+        <div className="mt-5">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-sm font-bold">Satuan & harga</span>
+            {!editing && (
+              <button className="text-xs font-semibold text-brand-600" onClick={() => setUnits((u) => [...u, { ...emptyUnit(), unit_name: '' }])}>
+                + Tambah satuan
+              </button>
+            )}
+          </div>
+          <div className="space-y-3">
+            {units.map((u, i) => (
+              <div key={u.id || i} className="rounded-xl border border-slate-200 dark:border-slate-800 p-3">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  <Field label="Satuan">
+                    <input className={inputClass} value={u.unit_name} onChange={(e) => updateUnit(i, { unit_name: e.target.value })} placeholder="Pcs / Dus / Kg" />
+                  </Field>
+                  <Field label="Harga eceran">
+                    <input type="number" min={0} className={inputClass} value={u.retail_price} onChange={(e) => updateUnit(i, { retail_price: e.target.value })} />
+                  </Field>
+                  <Field label="Harga grosir">
+                    <input type="number" min={0} className={inputClass} value={u.wholesale_price} onChange={(e) => updateUnit(i, { wholesale_price: e.target.value })} placeholder="= eceran" />
+                  </Field>
+                  <Field label="Min. grosir">
+                    <input type="number" min={1} className={inputClass} value={u.min_wholesale_qty} onChange={(e) => updateUnit(i, { min_wholesale_qty: e.target.value })} />
+                  </Field>
+                  <Field label={editing ? 'Stok' : 'Stok awal'}>
+                    <input type="number" min={0} className={inputClass} value={u.stock} onChange={(e) => updateUnit(i, { stock: e.target.value })} />
+                  </Field>
+                </div>
+                {!editing && units.length > 1 && (
+                  <button className="mt-2 inline-flex items-center gap-1 text-xs text-rose-600" onClick={() => setUnits((us) => us.filter((_, idx) => idx !== i))}>
+                    <X className="h-3 w-3" /> Hapus satuan
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">
+            Harga grosir berlaku untuk mitra toko (B2B) yang membeli minimal sejumlah "Min. grosir".
+            {editing && ' Perubahan stok di sini dicatat sebagai koreksi di Mutasi Stok.'}
+          </p>
+        </div>
+
+        {editing && (
+          <label className="mt-4 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
+            Tampilkan di toko online
+          </label>
+        )}
+      </Modal>
+
+      <Modal
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        size="sm"
+        title={`Hapus ${deleting?.name}?`}
+        subtitle="Produk hilang dari toko dan keranjang pelanggan. Riwayat pesanan lama tetap tersimpan. Untuk menyembunyikan sementara, pakai Ubah → matikan 'Tampilkan di toko online'."
+        footer={
+          <>
+            <button className={btnSecondary} onClick={() => setDeleting(null)}>Batal</button>
+            <button className={btnDanger} disabled={busy} onClick={confirmDelete}>Hapus</button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-400">Tindakan ini tidak bisa dibatalkan dari dashboard.</p>
+      </Modal>
     </div>
   );
 };

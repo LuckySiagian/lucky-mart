@@ -4,10 +4,8 @@ import (
 	"net/http"
 
 	"backend-sembako/helpers"
-	"backend-sembako/internal/constants"
 	"backend-sembako/internal/dto"
 	"backend-sembako/internal/services"
-	"backend-sembako/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,16 +19,16 @@ func NewPaymentHandler(paymentService services.PaymentService) *PaymentHandler {
 }
 
 func (h *PaymentHandler) CreatePayment(c *gin.Context) {
-	userID, role := getUserContextInfo(c)
+	userID, role := getUserContext(c)
 	var req dto.CreatePaymentDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		_ = c.Error(err)
 		return
 	}
 
-	res, err := h.paymentService.CreatePayment(c.Request.Context(), userID, constants.UserRole(role), req)
+	res, err := h.paymentService.CreatePayment(c.Request.Context(), userID, role, req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -38,14 +36,14 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 }
 
 func (h *PaymentHandler) GetPayments(c *gin.Context) {
-	userID, role := getUserContextInfo(c)
+	userID, role := getUserContext(c)
 	var req dto.PaginationRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
 		_ = c.Error(err)
 		return
 	}
 
-	res, err := h.paymentService.GetPayments(c.Request.Context(), userID, constants.UserRole(role), req)
+	res, err := h.paymentService.GetPayments(c.Request.Context(), userID, role, req, c.Query("status"))
 	if err != nil {
 		helpers.SendInternalServerError(c, err.Error())
 		return
@@ -55,17 +53,15 @@ func (h *PaymentHandler) GetPayments(c *gin.Context) {
 }
 
 func (h *PaymentHandler) GetPaymentByID(c *gin.Context) {
-	userID, role := getUserContextInfo(c)
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid payment UUID format", nil)
+	userID, role := getUserContext(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
-	res, err := h.paymentService.GetPaymentByID(c.Request.Context(), userID, constants.UserRole(role), id)
+	res, err := h.paymentService.GetPaymentByID(c.Request.Context(), userID, role, id)
 	if err != nil {
-		helpers.SendNotFound(c, err.Error())
+		sendServiceError(c, err)
 		return
 	}
 
@@ -73,7 +69,7 @@ func (h *PaymentHandler) GetPaymentByID(c *gin.Context) {
 }
 
 func (h *PaymentHandler) UploadProof(c *gin.Context) {
-	userID, _ := getUserContextInfo(c)
+	userID, _ := getUserContext(c)
 	var req dto.UploadProofDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		_ = c.Error(err)
@@ -82,7 +78,7 @@ func (h *PaymentHandler) UploadProof(c *gin.Context) {
 
 	res, err := h.paymentService.UploadProof(c.Request.Context(), userID, req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -106,11 +102,9 @@ func (h *PaymentHandler) GetWaitingConfirmation(c *gin.Context) {
 }
 
 func (h *PaymentHandler) ApprovePayment(c *gin.Context) {
-	adminID, _ := getUserContextInfo(c)
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid payment UUID format", nil)
+	adminID, _ := getUserContext(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
@@ -119,7 +113,7 @@ func (h *PaymentHandler) ApprovePayment(c *gin.Context) {
 
 	res, err := h.paymentService.ApprovePayment(c.Request.Context(), adminID, id, req.Notes)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -127,20 +121,21 @@ func (h *PaymentHandler) ApprovePayment(c *gin.Context) {
 }
 
 func (h *PaymentHandler) RejectPayment(c *gin.Context) {
-	adminID, _ := getUserContextInfo(c)
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid payment UUID format", nil)
+	adminID, _ := getUserContext(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
-	var req dto.ConfirmPaymentDTO
-	_ = c.ShouldBindJSON(&req)
+	var req dto.RejectPaymentDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(err)
+		return
+	}
 
 	res, err := h.paymentService.RejectPayment(c.Request.Context(), adminID, id, req.Notes)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -148,17 +143,15 @@ func (h *PaymentHandler) RejectPayment(c *gin.Context) {
 }
 
 func (h *PaymentHandler) CancelPayment(c *gin.Context) {
-	userID, role := getUserContextInfo(c)
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid payment UUID format", nil)
+	userID, role := getUserContext(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
-	res, err := h.paymentService.CancelPayment(c.Request.Context(), userID, constants.UserRole(role), id)
+	res, err := h.paymentService.CancelPayment(c.Request.Context(), userID, role, id)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -166,11 +159,9 @@ func (h *PaymentHandler) CancelPayment(c *gin.Context) {
 }
 
 func (h *PaymentHandler) RefundPayment(c *gin.Context) {
-	adminID, _ := getUserContextInfo(c)
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid payment UUID format", nil)
+	adminID, _ := getUserContext(c)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
@@ -182,7 +173,7 @@ func (h *PaymentHandler) RefundPayment(c *gin.Context) {
 
 	res, err := h.paymentService.RefundPayment(c.Request.Context(), adminID, id, req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 

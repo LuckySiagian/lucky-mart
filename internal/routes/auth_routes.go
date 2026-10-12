@@ -24,6 +24,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, authHandler *handler.AuthHandler, jw
 		protected.Use(middleware.JWTAuth(jwtService))
 		{
 			protected.GET("/me", authHandler.GetMe)
+			protected.PUT("/me", authHandler.UpdateProfile)
 			protected.POST("/logout", authHandler.Logout)
 			protected.POST("/change-password", authHandler.ChangePassword)
 		}

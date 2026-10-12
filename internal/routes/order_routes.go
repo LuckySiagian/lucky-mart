@@ -12,13 +12,19 @@ func RegisterOrderRoutes(r *gin.RouterGroup, orderHandler *handler.OrderHandler,
 	orders := r.Group("/orders")
 	orders.Use(middleware.JWTAuth(jwtService))
 	{
+		// Customers see only their own orders; staff see all (enforced in the service).
 		orders.POST("", orderHandler.CreateOrder)
 		orders.GET("", orderHandler.GetOrders)
 		orders.GET("/:id", orderHandler.GetOrderByID)
 		orders.PUT("/:id/cancel", orderHandler.CancelOrder)
-		orders.PUT("/:id/status", orderHandler.UpdateOrderStatus)
-		orders.PATCH("/:id/status", orderHandler.UpdateOrderStatus)
 		orders.GET("/:id/history", orderHandler.GetOrderHistory)
+
+		staff := orders.Group("")
+		staff.Use(middleware.RequireRoles(deliveryRoles...))
+		{
+			staff.PUT("/:id/status", orderHandler.UpdateOrderStatus)
+			staff.PATCH("/:id/status", orderHandler.UpdateOrderStatus)
+		}
 	}
 
 	invoices := r.Group("/invoices")

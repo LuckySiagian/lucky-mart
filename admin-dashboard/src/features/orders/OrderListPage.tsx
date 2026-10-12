@@ -1,459 +1,423 @@
 import React, { useState } from 'react';
-import { PageHeader } from '../../components/common/PageHeader';
-import { formatCurrency } from '../../lib/utils';
-import { ShoppingCart, Eye, Ban, Search, CheckCircle2, Truck, Clock, X, FileText, Plus, Trash2 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { orderService } from '../../services/apiServices';
+import { ArrowRight, CheckCheck, ExternalLink, Loader2, MapPin, MessageCircle, Package, Phone, Store, Truck, XCircle } from 'lucide-react';
+import { PageHeader } from '../../components/common/PageHeader';
+import { StatusBadge } from '../../components/common/StatusBadge';
+import { LoadingSkeleton } from '../../components/common/LoadingSkeleton';
+import { EmptyState } from '../../components/common/EmptyState';
+import { ErrorState } from '../../components/common/ErrorState';
+import { Modal, btnDanger, btnPrimary, btnSecondary, inputClass } from '../../components/common/Modal';
+import { Card, FilterTabs, Pagination, SearchInput } from '../../components/common/Pagination';
+import { orderService, paymentService } from '../../services/apiServices';
+import { useList } from '../../hooks/useList';
+import { hasRole, MANAGER_ROLES, useAuthStore } from '../../store/useAuthStore';
+import {
+  DELIVERY_LABELS,
+  formatCurrency,
+  formatDate,
+  getErrorMessage,
+  orderStatusLabel,
+  paymentMethodLabel,
+  whatsappLink,
+} from '../../lib/utils';
+import type { Order, OrderStatus } from '../../types';
 
-interface OrderItem {
-  name: string;
-  unit: string;
-  qty: number;
-  price: number;
-}
+// Tabs follow the work to do, not every internal status.
+const TABS = [
+  { key: 'proses', value: 'CREATED,CONFIRMED,PAID,PROCESSING_PACKING', label: 'Perlu Diproses' },
+  { key: 'bayar', value: 'PENDING_PAYMENT', label: 'Menunggu Transfer' },
+  { key: 'jalan', value: 'OUT_FOR_DELIVERY', label: 'Diantar / Siap Diambil' },
+  { key: 'selesai', value: 'COMPLETED', label: 'Selesai' },
+  { key: 'batal', value: 'CANCELLED', label: 'Batal' },
+  { key: 'semua', value: '', label: 'Semua' },
+];
 
-interface OrderRecord {
-  id: string;
-  orderNumber: string;
-  customerName: string;
-  customerType: 'B2C_CUSTOMER' | 'B2B_MITRA';
-  orderDate: string;
-  paymentMethod: string;
-  grandTotal: number;
-  status: 'PENDING_PAYMENT' | 'PAID' | 'PROCESSING' | 'SHIPPED' | 'COMPLETED' | 'CANCELLED';
-  items: OrderItem[];
-  shippingAddress: string;
+/** Button text for moving an order to `next`, worded for the store owner. */
+function actionLabel(next: OrderStatus, o: Order): string {
+  const pickup = o.delivery_type === 'PICKUP';
+  switch (next) {
+    case 'CONFIRMED':
+      return 'Terima Pesanan';
+    case 'PROCESSING_PACKING':
+      return 'Siapkan Barang';
+    case 'OUT_FOR_DELIVERY':
+      return pickup ? 'Siap Diambil' : 'Antar Sekarang';
+    case 'COMPLETED':
+      return pickup ? 'Sudah Diambil' : 'Sudah Sampai';
+    default:
+      return orderStatusLabel(next, o.delivery_type);
+  }
 }
 
 export const OrderListPage: React.FC = () => {
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const user = useAuthStore((s) => s.user);
+  const isManager = hasRole(user, MANAGER_ROLES);
+  const isDriver = user?.role === 'DRIVER';
+  const [searchParams] = useSearchParams();
+  const initialTab = TABS.find((t) => t.key === searchParams.get('tab')) || TABS[0];
 
-  const fetchOrders = async () => {
-    setLoading(true);
+  const list = useList((p) => orderService.getOrders(p), { status: initialTab.value });
+  const [selected, setSelected] = useState<Order | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+
+  // Steps this user may take, cancel excluded (it has its own button).
+  const nextSteps = (o: Order) =>
+    o.next_statuses.filter((s) => s !== 'CANCELLED' && (!isDriver || s === 'COMPLETED'));
+
+  const openDetail = async (id: string) => {
+    setDetailLoading(true);
     try {
-      const res = await orderService.getOrders(1, 100);
-      const items = Array.isArray(res.data)
-        ? res.data
-        : (res.data?.items || (Array.isArray(res) ? res : []));
-      
-      const mapped = items.map((o: any) => ({
-        id: o.id,
-        orderNumber: o.order_number || `ORD-${o.id.slice(0, 8)}`,
-        customerName: o.user?.full_name || o.customer_name || 'Pelanggan LuckyMart',
-        customerType: (o.user?.role === 'B2B_CUSTOMER' ? 'B2B_MITRA' : 'B2C_CUSTOMER') as any,
-        orderDate: o.created_at ? new Date(o.created_at).toLocaleString('id-ID') : 'Terbaru',
-        paymentMethod: o.payment_method || 'Transfer Bank',
-        grandTotal: o.total_amount || 0,
-        status: o.status || 'PENDING_PAYMENT',
-        items: o.order_items?.map((item: any) => ({
-          name: item.product_name || 'Produk Sembako',
-          unit: item.unit_name || 'Pcs',
-          qty: item.quantity || 1,
-          price: item.price || 0,
-        })) || [],
-        shippingAddress: o.address?.address_line || 'Alamat Penerima',
-      }));
-      setOrders(mapped);
-    } catch (e) {
-      setOrders([]);
+      setSelected(await orderService.getOrderById(id));
+    } catch (err) {
+      toast.error(getErrorMessage(err));
     } finally {
-      setLoading(false);
+      setDetailLoading(false);
     }
   };
 
-  React.useEffect(() => {
-    fetchOrders();
-  }, []);
-
-  // Detail Modal State
-  const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
-
-  // Manual Create Order Modal State
-  const [isAddOpen, setIsAddOpen] = useState(false);
-  const [custName, setCustName] = useState('');
-  const [custType, setCustType] = useState<'B2C_CUSTOMER' | 'B2B_MITRA'>('B2C_CUSTOMER');
-  const [payMethod, setPayMethod] = useState('Tunai / Cash Toko');
-  const [itemSelect, setItemSelect] = useState('Beras Pandan Wangi Super 10kg');
-  const [itemQty, setItemQty] = useState('1');
-  const [itemPrice, setItemPrice] = useState('145000');
-  const [address, setAddress] = useState('Alamat Toko Utama');
-
-  const handleUpdateStatus = async (id: string, newStatus: OrderRecord['status']) => {
+  const changeStatus = async (o: Order, status: OrderStatus) => {
+    setBusyId(o.id);
     try {
-      await orderService.updateOrderStatus(id, newStatus);
-      setOrders((prev) =>
-        prev.map((o) => (o.id === id ? { ...o, status: newStatus } : o))
-      );
-      toast.success(`Status Order "${id}" diperbarui menjadi ${newStatus}!`);
-      if (selectedOrder && selectedOrder.id === id) {
-        setSelectedOrder((prev) => (prev ? { ...prev, status: newStatus } : null));
-      }
-    } catch (e: any) {
-      toast.error('Gagal memperbarui status order ke server.');
+      const updated = await orderService.updateOrderStatus(o.id, status);
+      if (selected?.id === o.id) setSelected(updated);
+      toast.success(`${updated.order_number}: ${orderStatusLabel(updated.status, updated.delivery_type)}`);
+      list.reload();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const handleDeleteOrder = (id: string, num: string) => {
-    if (window.confirm(`Hapus permanen data pesanan "${num}" dari database?`)) {
-      setOrders((prev) => prev.filter((o) => o.id !== id));
-      toast.success(`Pesanan "${num}" berhasil dihapus!`);
-      if (selectedOrder?.id === id) setSelectedOrder(null);
+  const cancelOrder = async () => {
+    if (!selected) return;
+    if (cancelReason.trim().length < 3) return toast.error('Tulis alasan pembatalan (minimal 3 huruf).');
+    setBusyId(selected.id);
+    try {
+      const updated = await orderService.cancelOrder(selected.id, cancelReason.trim());
+      setSelected(updated);
+      setCancelOpen(false);
+      setCancelReason('');
+      toast.success('Pesanan dibatalkan dan stok dikembalikan.');
+      list.reload();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const handleCreateManualOrder = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!custName.trim() || !itemPrice) {
-      toast.error('Nama pelanggan dan total harga wajib diisi.');
-      return;
+  const proofPayment = selected?.payments?.find((p) => p.status === 'WAITING_CONFIRMATION');
+
+  const approvePayment = async () => {
+    if (!selected || !proofPayment) return;
+    setBusyId(selected.id);
+    try {
+      await paymentService.approvePayment(proofPayment.id, 'Transfer sudah masuk');
+      setSelected(await orderService.getOrderById(selected.id));
+      toast.success('Pembayaran diterima. Pesanan siap diproses.');
+      list.reload();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusyId(null);
     }
-
-    const qty = parseInt(itemQty, 10) || 1;
-    const price = parseFloat(itemPrice) || 50000;
-    const orderNum = `ORD-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    const newOrder: OrderRecord = {
-      id: `ORD-${Date.now()}`,
-      orderNumber: orderNum,
-      customerName: custName.trim(),
-      customerType: custType,
-      orderDate: new Date().toISOString().replace('T', ' ').slice(0, 16),
-      paymentMethod: payMethod,
-      grandTotal: qty * price,
-      status: 'PAID',
-      items: [{ name: itemSelect, unit: 'Unit', qty: qty, price: price }],
-      shippingAddress: address.trim() || 'Diambil di Gudang',
-    };
-
-    setOrders((prev) => [newOrder, ...prev]);
-    toast.success(`Pesanan manual "${orderNum}" berhasil dibuat!`);
-    setIsAddOpen(false);
-    setCustName('');
   };
 
-  const filtered = orders.filter(
-    (o) =>
-      o.orderNumber.toLowerCase().includes(search.toLowerCase()) ||
-      o.customerName.toLowerCase().includes(search.toLowerCase())
-  );
+  const rejectPayment = async () => {
+    if (!selected || !proofPayment) return;
+    if (rejectReason.trim().length < 3) return toast.error('Tulis alasan penolakan agar pelanggan tahu.');
+    setBusyId(selected.id);
+    try {
+      await paymentService.rejectPayment(proofPayment.id, rejectReason.trim());
+      setSelected(await orderService.getOrderById(selected.id));
+      setRejectOpen(false);
+      setRejectReason('');
+      toast.success('Bukti transfer ditolak. Pelanggan diminta mengirim ulang.');
+      list.reload();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const waLink = (o: Order) =>
+    whatsappLink(
+      o.customer?.phone_number || o.address?.phone,
+      `Halo ${o.customer?.full_name || ''}, ini dari Lucky Mart soal pesanan ${o.order_number}.`
+    );
+
+  const activeTab = TABS.find((t) => t.value === ((list.params.status as string) || '')) || TABS[TABS.length - 1];
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Manajemen Pesanan & Fulfillment (Orders)"
-        subtitle="Pantau siklus pemrosesan pesanan dari Pembeli B2C & Mitra Warung B2B dari pembayaran hingga pengiriman barang."
+    <div className="space-y-5">
+      <PageHeader title="Pesanan" subtitle="Klik tombol hijau untuk lanjut ke langkah berikutnya." />
+
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <FilterTabs value={activeTab.value} onChange={(v) => list.setFilter('status', v)} options={TABS} />
+        <SearchInput value={list.searchInput} onChange={list.setSearchInput} placeholder="Cari nama, nomor HP, atau nomor pesanan..." />
+      </div>
+
+      {list.loading ? (
+        <LoadingSkeleton count={5} />
+      ) : list.error ? (
+        <ErrorState message={list.error} onRetry={list.reload} />
+      ) : list.items.length === 0 ? (
+        <EmptyState title="Tidak ada pesanan" description={activeTab.key === 'proses' ? 'Semua pesanan sudah diproses. Mantap!' : 'Belum ada pesanan di sini.'} />
+      ) : (
+        <div className="space-y-3">
+          {list.items.map((o) => {
+            const next = nextSteps(o)[0];
+            const pickup = o.delivery_type === 'PICKUP';
+            return (
+              <Card key={o.id} className="p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <button onClick={() => openDetail(o.id)} className="min-w-0 flex-1 text-left">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-slate-900 dark:text-white">{o.customer?.full_name || o.address?.recipient_name || '-'}</span>
+                      <StatusBadge status={o.status} label={orderStatusLabel(o.status, o.delivery_type)} />
+                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                        {pickup ? <Store className="h-3 w-3" /> : <Truck className="h-3 w-3" />}
+                        {DELIVERY_LABELS[o.delivery_type] || 'Diantar'}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {o.order_number} · {formatDate(o.order_date)} · {o.total_items} barang · {paymentMethodLabel(o.payment_method)}
+                    </div>
+                    {!pickup && o.address && (
+                      <div className="mt-0.5 truncate text-xs text-slate-500">
+                        <MapPin className="mr-1 inline h-3 w-3" />
+                        {o.address.full_address}
+                      </div>
+                    )}
+                  </button>
+                  <div className="flex items-center justify-between gap-3 sm:justify-end">
+                    <div className="text-base font-bold text-slate-900 dark:text-white">{formatCurrency(o.grand_total)}</div>
+                    {next ? (
+                      <button className={btnPrimary} disabled={busyId === o.id} onClick={() => changeStatus(o, next)}>
+                        {busyId === o.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                        {actionLabel(next, o)}
+                      </button>
+                    ) : (
+                      <button className={btnSecondary} onClick={() => openDetail(o.id)}>
+                        {o.status === 'PENDING_PAYMENT' ? 'Cek Pembayaran' : 'Detail'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+          <Pagination meta={list.meta} onPage={list.setPage} />
+        </div>
+      )}
+
+      {detailLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40">
+          <Loader2 className="h-8 w-8 animate-spin text-white" />
+        </div>
+      )}
+
+      <Modal
+        open={!!selected}
+        onClose={() => setSelected(null)}
+        size="lg"
+        title={selected ? selected.customer?.full_name || selected.order_number : ''}
+        subtitle={selected ? `${selected.order_number} · ${formatDate(selected.order_date)}` : undefined}
+        footer={
+          selected && (
+            <>
+              {selected.can_cancel && !isDriver && (
+                <button className={btnDanger} disabled={busyId === selected.id} onClick={() => setCancelOpen(true)}>
+                  <XCircle className="h-4 w-4" /> Batalkan
+                </button>
+              )}
+              {nextSteps(selected)
+                .slice()
+                .reverse()
+                .map((s, i, arr) => (
+                  <button
+                    key={s}
+                    className={i === arr.length - 1 ? btnPrimary : btnSecondary}
+                    disabled={busyId === selected.id}
+                    onClick={() => changeStatus(selected, s)}
+                  >
+                    {s === 'COMPLETED' ? <CheckCheck className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
+                    {actionLabel(s, selected)}
+                  </button>
+                ))}
+            </>
+          )
+        }
       >
-        <button
-          onClick={() => setIsAddOpen(true)}
-          className="inline-flex items-center space-x-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition-colors shadow-lg shadow-brand-600/20"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Buat Pesanan Manual</span>
-        </button>
-      </PageHeader>
-
-      {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
-        <div className="relative w-full sm:w-80">
-          <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari no. order atau nama pembeli..."
-            className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 pl-10 pr-4 py-2 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-        <div className="text-xs text-slate-500 font-semibold">
-          Total Transaksi: <span className="text-brand-600 font-bold">{orders.length} Pesanan</span>
-        </div>
-      </div>
-
-      {/* Orders Table */}
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
-        <table className="w-full text-left text-sm text-slate-600 dark:text-slate-400">
-          <thead className="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-slate-500 font-bold border-b border-slate-200 dark:border-slate-800">
-            <tr>
-              <th className="px-6 py-4">Nomor Order & Waktu</th>
-              <th className="px-6 py-4">Pelanggan & Tipe</th>
-              <th className="px-6 py-4">Metode Bayar</th>
-              <th className="px-6 py-4">Total Belanja</th>
-              <th className="px-6 py-4">Status Pesanan</th>
-              <th className="px-6 py-4 text-right">Aksi Kelola (CRUD)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-            {filtered.map((o) => (
-              <tr key={o.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/30">
-                <td className="px-6 py-4">
-                  <div className="font-mono font-bold text-slate-900 dark:text-white">{o.orderNumber}</div>
-                  <div className="text-xs text-slate-400">{o.orderDate}</div>
-                </td>
-                <td className="px-6 py-4">
-                  <div className="font-bold text-slate-900 dark:text-white">{o.customerName}</div>
-                  <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${o.customerType === 'B2B_MITRA' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
-                    {o.customerType === 'B2B_MITRA' ? 'B2B MITRA WARUNG' : 'B2C ECERAN'}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-xs font-semibold text-slate-700 dark:text-slate-300">{o.paymentMethod}</td>
-                <td className="px-6 py-4 font-black text-slate-900 dark:text-white">{formatCurrency(o.grandTotal)}</td>
-                <td className="px-6 py-4">
-                  {o.status === 'PENDING_PAYMENT' && (
-                    <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-800 px-2.5 py-0.5 text-xs font-bold">
-                      MENUNGGU BAYAR
-                    </span>
-                  )}
-                  {o.status === 'PAID' && (
-                    <span className="inline-flex items-center rounded-full bg-blue-100 text-blue-800 px-2.5 py-0.5 text-xs font-bold">
-                      LUNAS (PAID)
-                    </span>
-                  )}
-                  {o.status === 'PROCESSING' && (
-                    <span className="inline-flex items-center rounded-full bg-purple-100 text-purple-800 px-2.5 py-0.5 text-xs font-bold">
-                      DIPROSES GUDANG
-                    </span>
-                  )}
-                  {o.status === 'SHIPPED' && (
-                    <span className="inline-flex items-center rounded-full bg-indigo-100 text-indigo-800 px-2.5 py-0.5 text-xs font-bold">
-                      DALAM PENGIRIMAN
-                    </span>
-                  )}
-                  {o.status === 'COMPLETED' && (
-                    <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-800 px-2.5 py-0.5 text-xs font-bold">
-                      SELESAI (COMPLETED)
-                    </span>
-                  )}
-                  {o.status === 'CANCELLED' && (
-                    <span className="inline-flex items-center rounded-full bg-rose-100 text-rose-800 px-2.5 py-0.5 text-xs font-bold">
-                      DIBATALKAN
-                    </span>
-                  )}
-                </td>
-                <td className="px-6 py-4 text-right space-x-2">
-                  <button
-                    onClick={() => setSelectedOrder(o)}
-                    className="inline-flex items-center space-x-1 rounded-lg bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-brand-600 hover:text-white transition-colors"
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                    <span>Detail</span>
-                  </button>
-                  <button
-                    onClick={() => handleDeleteOrder(o.id, o.orderNumber)}
-                    className="inline-flex items-center space-x-1 rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400 px-2.5 py-1 text-xs font-bold hover:bg-rose-200"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Hapus</span>
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Modal Detail Order */}
-      {selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-lg rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
-              <div className="flex items-center space-x-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-100 text-brand-600">
-                  <FileText className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">Rincian Invoice Order</h3>
-                  <p className="text-xs text-slate-500">{selectedOrder.orderNumber}</p>
-                </div>
-              </div>
-              <button onClick={() => setSelectedOrder(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100">
-                <X className="h-5 w-5" />
-              </button>
+        {selected && (
+          <div className="space-y-5 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={selected.status} label={orderStatusLabel(selected.status, selected.delivery_type)} />
+              <span className="text-xs text-slate-500">
+                {DELIVERY_LABELS[selected.delivery_type] || 'Diantar'} · {paymentMethodLabel(selected.payment_method)}
+              </span>
             </div>
 
-            <div className="space-y-4">
-              <div className="rounded-2xl bg-slate-100 dark:bg-slate-800 p-4 space-y-2 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Pembeli:</span>
-                  <span className="font-bold text-slate-900 dark:text-white">{selectedOrder.customerName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Metode Bayar:</span>
-                  <span className="font-bold text-slate-900 dark:text-white">{selectedOrder.paymentMethod}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Alamat Pengiriman:</span>
-                  <span className="font-bold text-slate-900 dark:text-white max-w-xs text-right">{selectedOrder.shippingAddress}</span>
-                </div>
-              </div>
-
-              {/* Items Table */}
-              <div>
-                <h4 className="text-xs font-bold text-slate-500 mb-2">Item Sembako Dipesan:</h4>
-                <div className="space-y-2">
-                  {selectedOrder.items.map((item, idx) => (
-                    <div key={idx} className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl text-xs">
-                      <div>
-                        <div className="font-bold text-slate-900 dark:text-white">{item.name}</div>
-                        <div className="text-slate-400">{item.qty} {item.unit} x {formatCurrency(item.price)}</div>
+            {selected.status === 'PENDING_PAYMENT' && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
+                {proofPayment ? (
+                  <div className="space-y-3">
+                    <div className="font-semibold text-amber-900 dark:text-amber-200">
+                      Pelanggan sudah kirim bukti transfer {formatCurrency(proofPayment.grand_total)}. Cek rekening toko, lalu:
+                    </div>
+                    {proofPayment.proof_image_url && (
+                      <a href={proofPayment.proof_image_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 underline dark:text-brand-400">
+                        <ExternalLink className="h-3.5 w-3.5" /> Lihat foto bukti transfer
+                      </a>
+                    )}
+                    {isManager ? (
+                      <div className="flex flex-wrap gap-2">
+                        <button className={btnPrimary} disabled={busyId === selected.id} onClick={approvePayment}>
+                          <CheckCheck className="h-4 w-4" /> Uang Sudah Masuk
+                        </button>
+                        <button className={btnSecondary} disabled={busyId === selected.id} onClick={() => setRejectOpen(true)}>
+                          Belum Masuk / Tolak
+                        </button>
                       </div>
-                      <div className="font-bold text-brand-600 dark:text-brand-400">
-                        {formatCurrency(item.qty * item.price)}
+                    ) : (
+                      <div className="text-xs text-amber-800 dark:text-amber-300">Minta pemilik atau manajer toko mengecek pembayaran ini.</div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-amber-900 dark:text-amber-200">Menunggu pelanggan transfer dan mengirim bukti. Pesanan diproses setelah uang masuk.</div>
+                )}
+              </div>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/50">
+                <div className="mb-1 text-xs font-semibold text-slate-500">Pelanggan</div>
+                <div className="font-semibold">{selected.customer?.full_name}</div>
+                <div className="flex items-center gap-1 text-xs text-slate-500">
+                  <Phone className="h-3 w-3" /> {selected.customer?.phone_number}
+                </div>
+                {waLink(selected) && (
+                  <a href={waLink(selected)!} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
+                    <MessageCircle className="h-3.5 w-3.5" /> Chat WhatsApp
+                  </a>
+                )}
+              </div>
+              <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/50">
+                {selected.delivery_type === 'PICKUP' ? (
+                  <>
+                    <div className="mb-1 text-xs font-semibold text-slate-500">Cara terima</div>
+                    <div className="flex items-center gap-1.5 font-semibold"><Store className="h-4 w-4" /> Diambil sendiri di toko</div>
+                  </>
+                ) : (
+                  selected.address && (
+                    <>
+                      <div className="mb-1 text-xs font-semibold text-slate-500">Antar ke</div>
+                      <div className="font-semibold">{selected.address.recipient_name} · {selected.address.phone}</div>
+                      <div className="flex items-start gap-1 text-xs text-slate-500">
+                        <MapPin className="mt-0.5 h-3 w-3 flex-shrink-0" /> {selected.address.full_address}, {selected.address.city} {selected.address.postal_code}
+                      </div>
+                    </>
+                  )
+                )}
+                {selected.address?.notes && <div className="mt-1 text-xs italic text-slate-500">Catatan: {selected.address.notes}</div>}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-xs font-semibold text-slate-500">Barang yang disiapkan</div>
+              <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                {selected.items.map((it) => (
+                  <div key={it.id} className="flex items-center justify-between gap-3 p-3">
+                    <div className="flex items-center gap-3">
+                      <Package className="h-4 w-4 text-slate-400" />
+                      <div>
+                        <div className="font-medium">{it.product_name}</div>
+                        <div className="text-xs text-slate-500">
+                          <b className="text-slate-700 dark:text-slate-300">{it.quantity} {it.unit_name}</b> × {formatCurrency(it.unit_price)}
+                        </div>
                       </div>
                     </div>
-                  ))}
-                </div>
+                    <div className="font-semibold">{formatCurrency(it.subtotal)}</div>
+                  </div>
+                ))}
               </div>
-
-              <div className="flex justify-between items-center pt-3 border-t border-slate-200 dark:border-slate-800">
-                <span className="text-sm font-bold text-slate-900 dark:text-white">Total Tagihan:</span>
-                <span className="text-lg font-black text-brand-600 dark:text-brand-400">{formatCurrency(selectedOrder.grandTotal)}</span>
-              </div>
-            </div>
-
-            {/* Workflow Action Buttons */}
-            <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-              <label className="block text-xs font-bold text-slate-500 mb-1">Perbarui Status Fulfillment:</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => handleUpdateStatus(selectedOrder.id, 'PROCESSING')}
-                  className="rounded-xl bg-purple-600 px-3 py-2 text-xs font-bold text-white hover:bg-purple-700"
-                >
-                  Set diproses Gudang
-                </button>
-                <button
-                  onClick={() => handleUpdateStatus(selectedOrder.id, 'SHIPPED')}
-                  className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700"
-                >
-                  Set Kirim Resi
-                </button>
-                <button
-                  onClick={() => handleUpdateStatus(selectedOrder.id, 'COMPLETED')}
-                  className="col-span-2 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
-                >
-                  Tandai Selesai (Completed)
-                </button>
+              <div className="mt-3 space-y-1 text-right text-sm">
+                <div className="text-slate-500">Belanja {formatCurrency(selected.total_amount)}</div>
+                {selected.shipping_fee > 0 && <div className="text-slate-500">Ongkir {formatCurrency(selected.shipping_fee)}</div>}
+                <div className="text-base font-bold">Total {formatCurrency(selected.grand_total)}</div>
               </div>
             </div>
+
+            <details className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+              <summary className="cursor-pointer text-xs font-semibold text-slate-500">Riwayat pesanan</summary>
+              <ol className="mt-3 space-y-3 border-l-2 border-slate-200 pl-4 dark:border-slate-800">
+                {selected.histories.map((h) => (
+                  <li key={h.id} className="relative">
+                    <span className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-brand-500" />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge status={h.status} label={orderStatusLabel(h.status, selected.delivery_type)} />
+                      <span className="text-xs text-slate-400">{formatDate(h.created_at)}</span>
+                    </div>
+                    {h.notes && <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">{h.notes}</p>}
+                  </li>
+                ))}
+              </ol>
+            </details>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
-      {/* Modal Buat Pesanan Manual Admin */}
-      {isAddOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
-              <div className="flex items-center space-x-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-100 text-brand-600">
-                  <Plus className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">Buat Pesanan Manual Admin</h3>
-                  <p className="text-xs text-slate-500">Pencatatan order pembelian offline atau pesanan via telpon.</p>
-                </div>
-              </div>
-              <button onClick={() => setIsAddOpen(false)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+      <Modal
+        open={cancelOpen}
+        onClose={() => setCancelOpen(false)}
+        size="sm"
+        title="Batalkan pesanan?"
+        subtitle="Stok barang dan kasbon dikembalikan otomatis. Kalau pelanggan sudah transfer, kembalikan uangnya lewat menu Pembayaran."
+        footer={
+          <>
+            <button className={btnSecondary} onClick={() => setCancelOpen(false)}>Kembali</button>
+            <button className={btnDanger} disabled={!!busyId} onClick={cancelOrder}>Ya, Batalkan</button>
+          </>
+        }
+      >
+        <textarea
+          className={inputClass}
+          rows={3}
+          placeholder="Alasan pembatalan, misal: stok habis / pelanggan minta batal"
+          value={cancelReason}
+          onChange={(e) => setCancelReason(e.target.value)}
+        />
+      </Modal>
 
-            <form onSubmit={handleCreateManualOrder} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Nama Pembeli *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: Pembeli Walk-in Toko"
-                  value={custName}
-                  onChange={(e) => setCustName(e.target.value)}
-                  className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white font-bold"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">Tipe Pelanggan</label>
-                  <select
-                    value={custType}
-                    onChange={(e) => setCustType(e.target.value as any)}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-xs text-slate-900 dark:text-white font-bold"
-                  >
-                    <option value="B2C_CUSTOMER">B2C Eceran</option>
-                    <option value="B2B_MITRA">B2B Mitra Warung</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">Metode Bayar</label>
-                  <select
-                    value={payMethod}
-                    onChange={(e) => setPayMethod(e.target.value)}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-xs text-slate-900 dark:text-white font-bold"
-                  >
-                    <option value="Tunai / Cash Toko">Tunai / Cash Toko</option>
-                    <option value="B2B Kasbon Tempo 30 Hari">B2B Kasbon Tempo</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Pilih Produk Sembako</label>
-                <select
-                  value={itemSelect}
-                  onChange={(e) => setItemSelect(e.target.value)}
-                  className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-xs text-slate-900 dark:text-white font-bold"
-                >
-                  <option value="Beras Pandan Wangi Super 10kg">Beras Pandan Wangi Super 10kg</option>
-                  <option value="Minyak Goreng Bimoli Refill 2L">Minyak Goreng Bimoli Refill 2L</option>
-                  <option value="Telur Ayam Negeri Super (1kg)">Telur Ayam Negeri Super (1kg)</option>
-                  <option value="Indomie Goreng Spesial (Karton / 40 Pcs)">Indomie Goreng Spesial (Karton)</option>
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">Jumlah (Qty)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={itemQty}
-                    onChange={(e) => setItemQty(e.target.value)}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white font-bold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">Harga Satuan (Rp)</label>
-                  <input
-                    type="number"
-                    value={itemPrice}
-                    onChange={(e) => setItemPrice(e.target.value)}
-                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white font-bold"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-200 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsAddOpen(false)}
-                  className="rounded-xl px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-brand-700 shadow-lg shadow-brand-600/20"
-                >
-                  Simpan & Buat Pesanan
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <Modal
+        open={rejectOpen}
+        onClose={() => setRejectOpen(false)}
+        size="sm"
+        title="Tolak bukti transfer?"
+        subtitle="Pelanggan akan diminta mengirim bukti transfer yang benar."
+        footer={
+          <>
+            <button className={btnSecondary} onClick={() => setRejectOpen(false)}>Kembali</button>
+            <button className={btnDanger} disabled={!!busyId} onClick={rejectPayment}>Tolak</button>
+          </>
+        }
+      >
+        <textarea
+          className={inputClass}
+          rows={3}
+          placeholder="Alasan, misal: uang belum masuk / nominal kurang"
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+        />
+      </Modal>
     </div>
   );
 };

@@ -5,12 +5,10 @@ import (
 
 	"backend-sembako/helpers"
 	"backend-sembako/internal/dto"
-	"backend-sembako/internal/middleware"
 	"backend-sembako/internal/services"
 	"backend-sembako/utils"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 type AddressHandler struct {
@@ -124,10 +122,4 @@ func (h *AddressHandler) SetDefaultAddress(c *gin.Context) {
 	}
 
 	helpers.ResponseSuccess(c, http.StatusOK, "Primary default address updated successfully", res)
-}
-
-func getUserContextInfo(c *gin.Context) (uuid.UUID, string) {
-	userIDVal, _ := c.Get(middleware.ContextUserIDKey)
-	userID, _ := userIDVal.(uuid.UUID)
-	return userID, ""
 }

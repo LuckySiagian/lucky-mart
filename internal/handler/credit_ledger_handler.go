@@ -113,3 +113,59 @@ func (h *CreditLedgerHandler) GetPaymentHistory(c *gin.Context) {
 
 	helpers.ResponseSuccess(c, http.StatusOK, "Credit payment history retrieved successfully", res)
 }
+
+func (h *CreditLedgerHandler) SettleCredit(c *gin.Context) {
+	id, ok := parseIDParam(c, "id")
+	if !ok {
+		return
+	}
+
+	var req dto.SettleCreditDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	res, err := h.ledgerService.SettleCredit(c.Request.Context(), id, req)
+	if err != nil {
+		sendServiceError(c, err)
+		return
+	}
+
+	helpers.ResponseSuccess(c, http.StatusOK, "Credit settlement recorded successfully", res)
+}
+
+// GetMyLedger returns the logged-in B2B customer's own kasbon account.
+func (h *CreditLedgerHandler) GetMyLedger(c *gin.Context) {
+	userID, _ := getUserContext(c)
+	res, err := h.ledgerService.GetLedgerByUserID(c.Request.Context(), userID)
+	if err != nil {
+		sendServiceError(c, err)
+		return
+	}
+
+	helpers.ResponseSuccess(c, http.StatusOK, "Credit ledger retrieved successfully", res)
+}
+
+func (h *CreditLedgerHandler) GetMyLedgerHistory(c *gin.Context) {
+	userID, _ := getUserContext(c)
+	ledger, err := h.ledgerService.GetLedgerByUserID(c.Request.Context(), userID)
+	if err != nil {
+		sendServiceError(c, err)
+		return
+	}
+
+	var req dto.PaginationRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	res, err := h.ledgerService.GetPaymentHistory(c.Request.Context(), ledger.ID, req)
+	if err != nil {
+		helpers.SendInternalServerError(c, err.Error())
+		return
+	}
+
+	helpers.ResponseSuccess(c, http.StatusOK, "Credit payment history retrieved successfully", res)
+}

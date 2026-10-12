@@ -12,10 +12,15 @@ import (
 )
 
 func InitDatabase(cfg *DatabaseConfig, env string) (*gorm.DB, error) {
-	dsn := fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Jakarta",
-		cfg.Host, cfg.User, cfg.Password, cfg.Name, cfg.Port, cfg.SSLMode,
-	)
+	// Managed Postgres providers (Neon, Supabase, Render, Railway) hand out a
+	// single connection URL; use it when present.
+	dsn := cfg.URL
+	if dsn == "" {
+		dsn = fmt.Sprintf(
+			"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Jakarta",
+			cfg.Host, cfg.User, cfg.Password, cfg.Name, cfg.Port, cfg.SSLMode,
+		)
+	}
 
 	var logLevel gormlogger.LogLevel
 	switch env {
