@@ -8,13 +8,22 @@ import (
 	"github.com/google/uuid"
 )
 
+// CreateOrderDTO places an order from the customer's cart. When CartItemIDs
+// is empty every item in the cart is ordered. For delivery the address comes
+// from a saved address (AddressID) or from the inline fields; a PICKUP order
+// needs no address and has no shipping fee.
 type CreateOrderDTO struct {
-	PaymentMethod constants.PaymentMethod `json:"payment_method" binding:"required"`
-	RecipientName string                  `json:"recipient_name" binding:"required,min=3,max=100"`
-	Phone         string                  `json:"phone" binding:"required,phone_id"`
-	FullAddress   string                  `json:"full_address" binding:"required"`
-	City          string                  `json:"city" binding:"required"`
-	PostalCode    string                  `json:"postal_code" binding:"required"`
+	PaymentMethod    constants.PaymentMethod `json:"payment_method" binding:"required"`
+	DeliveryType     string                  `json:"delivery_type" binding:"omitempty,oneof=DELIVERY PICKUP"`
+	CartItemIDs      []uuid.UUID             `json:"cart_item_ids" binding:"omitempty"`
+	ShippingMethodID *uuid.UUID              `json:"shipping_method_id" binding:"omitempty"`
+	AddressID        *uuid.UUID              `json:"address_id" binding:"omitempty"`
+	RecipientName    string                  `json:"recipient_name" binding:"omitempty,max=100"`
+	Phone            string                  `json:"phone" binding:"omitempty,max=20"`
+	FullAddress      string                  `json:"full_address" binding:"omitempty"`
+	City             string                  `json:"city" binding:"omitempty,max=100"`
+	PostalCode       string                  `json:"postal_code" binding:"omitempty,max=10"`
+	Notes            string                  `json:"notes" binding:"omitempty,max=500"`
 }
 
 type CancelOrderDTO struct {
@@ -26,12 +35,12 @@ type UpdateOrderStatusDTO struct {
 	Notes  string                `json:"notes,omitempty"`
 }
 
-
 type OrderItemResponseDTO struct {
 	ID            uuid.UUID `json:"id"`
 	ProductID     uuid.UUID `json:"product_id"`
 	ProductName   string    `json:"product_name"`
 	SKU           string    `json:"sku"`
+	ImageURL      string    `json:"image_url,omitempty"`
 	ProductUnitID uuid.UUID `json:"product_unit_id"`
 	UnitName      string    `json:"unit_name"`
 	Quantity      int       `json:"quantity"`
@@ -46,6 +55,7 @@ type OrderAddressResponseDTO struct {
 	FullAddress   string `json:"full_address"`
 	City          string `json:"city"`
 	PostalCode    string `json:"postal_code"`
+	Notes         string `json:"notes,omitempty"`
 }
 
 type InvoiceResponseDTO struct {
@@ -66,19 +76,32 @@ type OrderHistoryResponseDTO struct {
 	CreatedAt time.Time             `json:"created_at"`
 }
 
+type OrderCustomerDTO struct {
+	ID          uuid.UUID          `json:"id"`
+	FullName    string             `json:"full_name"`
+	PhoneNumber string             `json:"phone_number"`
+	Role        constants.UserRole `json:"role"`
+}
+
 type OrderResponseDTO struct {
-	ID            uuid.UUID               `json:"id"`
-	OrderNumber   string                  `json:"order_number"`
-	UserID        uuid.UUID               `json:"user_id"`
-	Status        constants.OrderStatus   `json:"status"`
-	PaymentMethod constants.PaymentMethod `json:"payment_method"`
-	TotalAmount   float64                 `json:"total_amount"`
-	ShippingFee   float64                 `json:"shipping_fee"`
-	GrandTotal    float64                 `json:"grand_total"`
-	DueDate       *time.Time              `json:"due_date,omitempty"`
-	OrderDate     time.Time               `json:"order_date"`
-	Items         []OrderItemResponseDTO  `json:"items,omitempty"`
-	Address       *OrderAddressResponseDTO `json:"address,omitempty"`
-	Invoice       *InvoiceResponseDTO     `json:"invoice,omitempty"`
-	Histories     []OrderHistoryResponseDTO `json:"histories,omitempty"`
+	ID            uuid.UUID                 `json:"id"`
+	OrderNumber   string                    `json:"order_number"`
+	UserID        uuid.UUID                 `json:"user_id"`
+	Customer      *OrderCustomerDTO         `json:"customer,omitempty"`
+	Status        constants.OrderStatus     `json:"status"`
+	NextStatuses  []constants.OrderStatus   `json:"next_statuses"`
+	CanCancel     bool                      `json:"can_cancel"`
+	PaymentMethod constants.PaymentMethod   `json:"payment_method"`
+	DeliveryType  string                    `json:"delivery_type"`
+	TotalAmount   float64                   `json:"total_amount"`
+	ShippingFee   float64                   `json:"shipping_fee"`
+	GrandTotal    float64                   `json:"grand_total"`
+	TotalItems    int                       `json:"total_items"`
+	DueDate       *time.Time                `json:"due_date,omitempty"`
+	OrderDate     time.Time                 `json:"order_date"`
+	Items         []OrderItemResponseDTO    `json:"items"`
+	Address       *OrderAddressResponseDTO  `json:"address,omitempty"`
+	Invoice       *InvoiceResponseDTO       `json:"invoice,omitempty"`
+	Payments      []PaymentResponseDTO      `json:"payments,omitempty"`
+	Histories     []OrderHistoryResponseDTO `json:"histories"`
 }

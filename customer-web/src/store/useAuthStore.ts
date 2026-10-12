@@ -1,13 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { User } from '../types';
 
-export interface User {
-  id: string;
-  full_name: string;
-  phone_number: string;
-  email: string;
-  role: string;
-}
+export type { User };
 
 interface AuthState {
   user: User | null;
@@ -15,7 +10,8 @@ interface AuthState {
   refreshToken: string | null;
   isAuthenticated: boolean;
   setAuth: (user: User, accessToken: string, refreshToken: string) => void;
-  setTokens: (accessToken: string, refreshToken: string) => void;
+  setTokens: (accessToken: string, refreshToken: string, user?: User) => void;
+  setUser: (user: User) => void;
   logout: () => void;
 }
 
@@ -26,12 +22,10 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       refreshToken: null,
       isAuthenticated: false,
-      setAuth: (user, accessToken, refreshToken) =>
-        set({ user, accessToken, refreshToken, isAuthenticated: true }),
-      setTokens: (accessToken, refreshToken) =>
-        set({ accessToken, refreshToken }),
-      logout: () =>
-        set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false }),
+      setAuth: (user, accessToken, refreshToken) => set({ user, accessToken, refreshToken, isAuthenticated: true }),
+      setTokens: (accessToken, refreshToken, user) => set((s) => ({ accessToken, refreshToken, user: user ?? s.user })),
+      setUser: (user) => set({ user }),
+      logout: () => set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false }),
     }),
     { name: 'luckymart-customer-auth' }
   )

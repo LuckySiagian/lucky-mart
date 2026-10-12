@@ -6,7 +6,6 @@ import (
 	"backend-sembako/helpers"
 	"backend-sembako/internal/dto"
 	"backend-sembako/internal/services"
-	"backend-sembako/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,7 +28,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 
 	res, err := h.orderService.CreateOrder(c.Request.Context(), userID, role, req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -44,7 +43,7 @@ func (h *OrderHandler) GetOrders(c *gin.Context) {
 		return
 	}
 
-	res, err := h.orderService.GetOrders(c.Request.Context(), userID, role, req)
+	res, err := h.orderService.GetOrders(c.Request.Context(), userID, role, req, c.Query("status"))
 	if err != nil {
 		helpers.SendInternalServerError(c, err.Error())
 		return
@@ -55,16 +54,14 @@ func (h *OrderHandler) GetOrders(c *gin.Context) {
 
 func (h *OrderHandler) GetOrderByID(c *gin.Context) {
 	userID, role := getUserContext(c)
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid order UUID format", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
 	res, err := h.orderService.GetOrderByID(c.Request.Context(), userID, role, id)
 	if err != nil {
-		helpers.SendNotFound(c, err.Error())
+		sendServiceError(c, err)
 		return
 	}
 
@@ -73,10 +70,8 @@ func (h *OrderHandler) GetOrderByID(c *gin.Context) {
 
 func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	userID, role := getUserContext(c)
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid order UUID format", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
@@ -88,7 +83,7 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 
 	res, err := h.orderService.CancelOrder(c.Request.Context(), userID, role, id, req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -97,16 +92,14 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 
 func (h *OrderHandler) GetOrderHistory(c *gin.Context) {
 	userID, role := getUserContext(c)
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid order UUID format", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
 	res, err := h.orderService.GetOrderHistory(c.Request.Context(), userID, role, id)
 	if err != nil {
-		helpers.SendNotFound(c, err.Error())
+		sendServiceError(c, err)
 		return
 	}
 
@@ -115,10 +108,8 @@ func (h *OrderHandler) GetOrderHistory(c *gin.Context) {
 
 func (h *OrderHandler) GetInvoiceByID(c *gin.Context) {
 	userID, role := getUserContext(c)
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid invoice UUID format", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
@@ -133,10 +124,8 @@ func (h *OrderHandler) GetInvoiceByID(c *gin.Context) {
 
 func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 	userID, role := getUserContext(c)
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid order UUID format", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
@@ -148,10 +137,9 @@ func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 
 	res, err := h.orderService.UpdateOrderStatus(c.Request.Context(), userID, role, id, req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
 	helpers.ResponseSuccess(c, http.StatusOK, "Order status updated successfully", res)
 }
-

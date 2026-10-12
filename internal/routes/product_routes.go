@@ -2,24 +2,35 @@ package routes
 
 import (
 	"backend-sembako/internal/handler"
+	"backend-sembako/internal/middleware"
 	"backend-sembako/pkg/jwt"
 
 	"github.com/gin-gonic/gin"
 )
 
 func RegisterProductRoutes(r *gin.RouterGroup, productHandler *handler.ProductHandler, jwtService jwt.JWTService) {
+	// Public catalog
 	r.GET("/categories", productHandler.GetCategories)
-	r.POST("/categories", productHandler.CreateCategory)
-	r.PUT("/categories/:id", productHandler.UpdateCategory)
-	r.DELETE("/categories/:id", productHandler.DeleteCategory)
+	r.GET("/products", productHandler.GetProducts)
+	r.GET("/products/:id", productHandler.GetProductByID)
 
-	products := r.Group("/products")
+	// Catalog management (managers only)
+	manage := r.Group("")
+	manage.Use(middleware.JWTAuth(jwtService), middleware.RequireRoles(managerRoles...))
 	{
-		// Public & Admin Catalog Endpoints
-		products.GET("", productHandler.GetProducts)
-		products.GET("/:id", productHandler.GetProductByID)
-		products.POST("", productHandler.CreateProduct)
-		products.PUT("/:id", productHandler.UpdateProduct)
-		products.DELETE("/:id", productHandler.DeleteProduct)
+		manage.POST("/categories", productHandler.CreateCategory)
+		manage.PUT("/categories/:id", productHandler.UpdateCategory)
+		manage.DELETE("/categories/:id", productHandler.DeleteCategory)
+
+		manage.POST("/products", productHandler.CreateProduct)
+		manage.PUT("/products/:id", productHandler.UpdateProduct)
+		manage.DELETE("/products/:id", productHandler.DeleteProduct)
+	}
+
+	// Staff view of the catalog including hidden products
+	staff := r.Group("/admin")
+	staff.Use(middleware.JWTAuth(jwtService), middleware.RequireRoles(warehouseRole...))
+	{
+		staff.GET("/products", productHandler.GetProductsAdmin)
 	}
 }

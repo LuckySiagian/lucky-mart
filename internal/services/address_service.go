@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrAddressNotFound    = errors.New("address not found")
+	ErrAddressNotFound     = errors.New("address not found")
 	ErrUnauthorizedAddress = errors.New("you do not have permission to access or modify this address")
 )
 

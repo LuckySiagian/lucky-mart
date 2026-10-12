@@ -8,19 +8,22 @@ import (
 
 type CreatePaymentDTO struct {
 	OrderID         uuid.UUID `json:"order_id" binding:"required"`
-	InvoiceID       uuid.UUID `json:"invoice_id" binding:"required"`
 	PaymentMethodID uuid.UUID `json:"payment_method_id" binding:"required"`
-	Notes           string    `json:"notes" binding:"omitempty"`
+	Notes           string    `json:"notes" binding:"omitempty,max=500"`
 }
 
 type UploadProofDTO struct {
 	PaymentID     uuid.UUID `json:"payment_id" binding:"required"`
-	ProofImageURL string    `json:"proof_image_url" binding:"required,url"`
-	Notes         string    `json:"notes" binding:"omitempty"`
+	ProofImageURL string    `json:"proof_image_url" binding:"required,max=500"` // uploaded /uploads/images/... path or an http(s) link
+	Notes         string    `json:"notes" binding:"omitempty,max=500"`
 }
 
 type ConfirmPaymentDTO struct {
-	Notes string `json:"notes" binding:"omitempty"`
+	Notes string `json:"notes" binding:"omitempty,max=500"`
+}
+
+type RejectPaymentDTO struct {
+	Notes string `json:"notes" binding:"required,min=3,max=500"`
 }
 
 type RefundDTO struct {
@@ -35,13 +38,24 @@ type CreatePaymentMethodDTO struct {
 	Description string `json:"description" binding:"omitempty"`
 }
 
+type UpdatePaymentMethodDTO struct {
+	Name        *string `json:"name" binding:"omitempty,min=2,max=100"`
+	Description *string `json:"description" binding:"omitempty,max=1000"`
+	IsActive    *bool   `json:"is_active" binding:"omitempty"`
+}
+
 type CreateCreditLedgerDTO struct {
 	UserID      uuid.UUID `json:"user_id" binding:"required"`
-	CreditLimit float64   `json:"credit_limit" binding:"required,gte=0"`
+	CreditLimit float64   `json:"credit_limit" binding:"gte=0"`
 }
 
 type AdjustCreditLimitDTO struct {
-	NewCreditLimit float64 `json:"new_credit_limit" binding:"required,gte=0"`
+	NewCreditLimit float64 `json:"new_credit_limit" binding:"gte=0"`
+}
+
+type SettleCreditDTO struct {
+	Amount float64 `json:"amount" binding:"required,gt=0"`
+	Notes  string  `json:"notes" binding:"omitempty,max=255"`
 }
 
 type PaymentMethodDTO struct {
@@ -66,8 +80,13 @@ type PaymentResponseDTO struct {
 	ID            uuid.UUID               `json:"id"`
 	PaymentNumber string                  `json:"payment_number"`
 	OrderID       uuid.UUID               `json:"order_id"`
+	OrderNumber   string                  `json:"order_number,omitempty"`
+	OrderStatus   string                  `json:"order_status,omitempty"`
 	InvoiceID     uuid.UUID               `json:"invoice_id"`
 	UserID        uuid.UUID               `json:"user_id"`
+	CustomerName  string                  `json:"customer_name,omitempty"`
+	CustomerPhone string                  `json:"customer_phone,omitempty"`
+	MethodCode    string                  `json:"method_code"`
 	MethodName    string                  `json:"method_name"`
 	MethodType    string                  `json:"method_type"`
 	Amount        float64                 `json:"amount"`
@@ -79,7 +98,7 @@ type PaymentResponseDTO struct {
 	PaidAt        *time.Time              `json:"paid_at,omitempty"`
 	ExpiredAt     time.Time               `json:"expired_at"`
 	Notes         string                  `json:"notes,omitempty"`
-	Logs          []PaymentLogResponseDTO `json:"logs,omitempty"`
+	Logs          []PaymentLogResponseDTO `json:"logs"`
 	CreatedAt     time.Time               `json:"created_at"`
 }
 
@@ -87,6 +106,8 @@ type CreditLedgerDTO struct {
 	ID                 uuid.UUID `json:"id"`
 	UserID             uuid.UUID `json:"user_id"`
 	UserName           string    `json:"user_name"`
+	UserPhone          string    `json:"user_phone,omitempty"`
+	StoreName          string    `json:"store_name,omitempty"`
 	CreditLimit        float64   `json:"credit_limit"`
 	UsedCredit         float64   `json:"used_credit"`
 	RemainingCredit    float64   `json:"remaining_credit"`
@@ -95,10 +116,13 @@ type CreditLedgerDTO struct {
 }
 
 type CreditPaymentHistoryDTO struct {
-	ID               uuid.UUID `json:"id"`
-	LedgerID         uuid.UUID `json:"ledger_id"`
-	PaymentID        uuid.UUID `json:"payment_id"`
-	Amount           float64   `json:"amount"`
-	PaymentDate      time.Time `json:"payment_date"`
-	RemainingBalance float64   `json:"remaining_balance"`
+	ID               uuid.UUID  `json:"id"`
+	LedgerID         uuid.UUID  `json:"ledger_id"`
+	PaymentID        *uuid.UUID `json:"payment_id,omitempty"`
+	OrderID          *uuid.UUID `json:"order_id,omitempty"`
+	Type             string     `json:"type"`
+	Amount           float64    `json:"amount"`
+	PaymentDate      time.Time  `json:"payment_date"`
+	RemainingBalance float64    `json:"remaining_balance"`
+	Notes            string     `json:"notes,omitempty"`
 }

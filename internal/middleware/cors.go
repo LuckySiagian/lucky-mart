@@ -4,24 +4,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// CORS allows the configured frontend origins. "*" (development only)
+// reflects any origin. Credentials are not used — the API authenticates with
+// a bearer token — so no Allow-Credentials header is sent.
 func CORS(allowOrigins []string) gin.HandlerFunc {
+	allowAll := false
+	allowed := make(map[string]bool, len(allowOrigins))
+	for _, o := range allowOrigins {
+		if o == "*" {
+			allowAll = true
+		}
+		allowed[o] = true
+	}
+
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
-		allowedOrigin := "*"
-
-		if len(allowOrigins) > 0 && allowOrigins[0] != "*" {
-			for _, o := range allowOrigins {
-				if o == origin {
-					allowedOrigin = origin
-					break
-				}
-			}
+		if origin != "" && (allowAll || allowed[origin]) {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Add("Vary", "Origin")
+			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, Cache-Control, X-Requested-With, X-Request-ID, X-Device-Info")
+			c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			c.Writer.Header().Set("Access-Control-Max-Age", "600")
 		}
-
-		c.Writer.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Request-ID")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, PATCH, DELETE")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)

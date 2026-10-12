@@ -1,9 +1,8 @@
 package main
 
 import (
-	"io"
+	"fmt"
 	"os"
-	"path/filepath"
 
 	"backend-sembako/config"
 	"backend-sembako/internal/api"
@@ -14,55 +13,31 @@ func main() {
 	// 1. Load Configurations
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		panic("Failed to load configuration: " + err.Error())
+		fmt.Fprintln(os.Stderr, "Failed to load configuration:", err)
+		os.Exit(1)
 	}
 
 	// 2. Initialize Structured Logger
 	logger.InitLogger(cfg.App.Env)
 	logger.Log.Info().Msgf("Starting %s v%s...", cfg.App.Name, cfg.App.Version)
 
-	// 3. Initialize Database Connection (PostgreSQL)
+	// 3. Connect to PostgreSQL. The API cannot work without its database,
+	// so fail loudly instead of starting in a half-working state.
 	db, err := config.InitDatabase(&cfg.Database, cfg.App.Env)
 	if err != nil {
-		logger.Log.Warn().Err(err).Msg("Database connection failed on startup. Server starting in degraded mode.")
-	} else if db != nil {
-		// Auto-migrate all 38 GORM entities
-		if err := config.AutoMigrate(db); err != nil {
-			logger.Log.Error().Err(err).Msg("Failed to auto-migrate database tables")
-		} else {
-			logger.Log.Info().Msg("PostgreSQL database tables auto-migrated successfully.")
-			_ = config.SeedDatabase(db)
-		}
+		logger.Log.Fatal().Err(err).Msg("Database connection failed")
+	}
+	if err := config.AutoMigrate(db); err != nil {
+		logger.Log.Fatal().Err(err).Msg("Failed to auto-migrate database tables")
+	}
+	logger.Log.Info().Msg("PostgreSQL database tables auto-migrated successfully.")
+	if err := config.SeedDatabase(db); err != nil {
+		logger.Log.Fatal().Err(err).Msg("Failed to seed database")
 	}
 
-	// Sync Logo Binary Files to Public Directories
-	syncLogoFiles()
-
-	// 4. Initialize & Bootstrap HTTP Server Engine
+	// 4. Start HTTP Server
 	server := api.NewServer(cfg, db)
 	if err := server.Run(); err != nil {
 		logger.Log.Fatal().Err(err).Msg("Failed to run HTTP server")
 	}
-}
-
-func syncLogoFiles() {
-	copyFile := func(src, dst string) {
-		in, err := os.Open(src)
-		if err != nil {
-			return
-		}
-		defer in.Close()
-
-		_ = os.MkdirAll(filepath.Dir(dst), 0755)
-		out, err := os.Create(dst)
-		if err != nil {
-			return
-		}
-		defer out.Close()
-
-		_, _ = io.Copy(out, in)
-	}
-
-	copyFile("logo.png", "customer-web/public/logo.png")
-	copyFile("logo.png", "admin-dashboard/public/logo.png")
 }

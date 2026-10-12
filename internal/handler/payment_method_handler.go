@@ -6,7 +6,6 @@ import (
 	"backend-sembako/helpers"
 	"backend-sembako/internal/dto"
 	"backend-sembako/internal/services"
-	"backend-sembako/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,8 +18,18 @@ func NewPaymentMethodHandler(methodService services.PaymentMethodService) *Payme
 	return &PaymentMethodHandler{methodService: methodService}
 }
 
+// GetPaymentMethods lists the active methods customers can choose.
 func (h *PaymentMethodHandler) GetPaymentMethods(c *gin.Context) {
-	res, err := h.methodService.GetPaymentMethods(c.Request.Context())
+	h.list(c, false)
+}
+
+// GetAllPaymentMethods (managers) also lists deactivated methods.
+func (h *PaymentMethodHandler) GetAllPaymentMethods(c *gin.Context) {
+	h.list(c, true)
+}
+
+func (h *PaymentMethodHandler) list(c *gin.Context, includeInactive bool) {
+	res, err := h.methodService.GetPaymentMethods(c.Request.Context(), includeInactive)
 	if err != nil {
 		helpers.SendInternalServerError(c, err.Error())
 		return
@@ -38,7 +47,7 @@ func (h *PaymentMethodHandler) CreatePaymentMethod(c *gin.Context) {
 
 	res, err := h.methodService.CreatePaymentMethod(c.Request.Context(), req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -46,14 +55,12 @@ func (h *PaymentMethodHandler) CreatePaymentMethod(c *gin.Context) {
 }
 
 func (h *PaymentMethodHandler) UpdatePaymentMethod(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid payment method UUID format", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
-	var req dto.CreatePaymentMethodDTO
+	var req dto.UpdatePaymentMethodDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		_ = c.Error(err)
 		return
@@ -61,7 +68,7 @@ func (h *PaymentMethodHandler) UpdatePaymentMethod(c *gin.Context) {
 
 	res, err := h.methodService.UpdatePaymentMethod(c.Request.Context(), id, req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -69,15 +76,13 @@ func (h *PaymentMethodHandler) UpdatePaymentMethod(c *gin.Context) {
 }
 
 func (h *PaymentMethodHandler) DeletePaymentMethod(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := utils.ParseUUID(idStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid payment method UUID format", nil)
+	id, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
 	if err := h.methodService.DeletePaymentMethod(c.Request.Context(), id); err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 

@@ -4,14 +4,11 @@ import (
 	"net/http"
 
 	"backend-sembako/helpers"
-	"backend-sembako/internal/constants"
 	"backend-sembako/internal/dto"
-	"backend-sembako/internal/middleware"
 	"backend-sembako/internal/services"
 	"backend-sembako/utils"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 type CartHandler struct {
@@ -104,21 +101,18 @@ func (h *CartHandler) ClearCart(c *gin.Context) {
 
 func (h *CartHandler) GetCheckoutSummary(c *gin.Context) {
 	userID, role := getUserContext(c)
-	res, err := h.cartService.GetCheckoutSummary(c.Request.Context(), userID, role)
+	var req dto.CheckoutSummaryRequestDTO
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			_ = c.Error(err)
+			return
+		}
+	}
+	res, err := h.cartService.GetCheckoutSummary(c.Request.Context(), userID, role, req)
 	if err != nil {
 		helpers.SendInternalServerError(c, err.Error())
 		return
 	}
 
 	helpers.ResponseSuccess(c, http.StatusOK, "Checkout summary generated successfully", res)
-}
-
-func getUserContext(c *gin.Context) (uuid.UUID, constants.UserRole) {
-	userIDVal, _ := c.Get(middleware.ContextUserIDKey)
-	roleVal, _ := c.Get(middleware.ContextUserRole)
-
-	userID, _ := userIDVal.(uuid.UUID)
-	role, _ := roleVal.(constants.UserRole)
-
-	return userID, role
 }

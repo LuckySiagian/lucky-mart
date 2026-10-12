@@ -26,3 +26,24 @@ type CreateUserDTO struct {
 	Password    string             `json:"password" binding:"required,min=8"`
 	Role        constants.UserRole `json:"role" binding:"required"`
 }
+
+type UpdateUserDTO struct {
+	FullName *string             `json:"full_name" binding:"omitempty,min=3,max=100"`
+	Email    *string             `json:"email" binding:"omitempty,email"`
+	Role     *constants.UserRole `json:"role" binding:"omitempty"`
+	IsActive *bool               `json:"is_active" binding:"omitempty"`
+}
+
+type AdminResetPasswordDTO struct {
+	NewPassword string `json:"new_password" binding:"required,min=8"`
+}
+
+type VerifyB2BDTO struct {
+	Status      constants.B2BVerificationStatus `json:"status" binding:"required,oneof=APPROVED REJECTED PENDING"`
+	CreditLimit *float64                        `json:"credit_limit" binding:"omitempty,gte=0"`
+}
+
+type UpdateProfileDTO struct {
+	FullName *string `json:"full_name" binding:"omitempty,min=3,max=100"`
+	Email    *string `json:"email" binding:"omitempty,email"`
+}

@@ -22,13 +22,14 @@ type NotificationService interface {
 	GetNotifications(ctx context.Context, userID uuid.UUID, userRole string, req dto.PaginationRequest) (dto.PaginatedResponse, error)
 	GetNotificationByID(ctx context.Context, userID uuid.UUID, userRole string, id uuid.UUID) (*dto.NotificationResponseDTO, error)
 	MarkAsRead(ctx context.Context, userID uuid.UUID, id uuid.UUID) (*dto.NotificationResponseDTO, error)
+	CountUnread(ctx context.Context, userID uuid.UUID) (int64, error)
 	MarkAllAsRead(ctx context.Context, userID uuid.UUID) error
 	DeleteNotification(ctx context.Context, userID uuid.UUID, id uuid.UUID) error
 	RetryNotification(ctx context.Context, notificationID uuid.UUID) (*dto.NotificationResponseDTO, error)
 }
 
 type notificationService struct {
-	db              *gorm.DB
+	db               *gorm.DB
 	notificationRepo repositories.NotificationRepository
 	logRepo          repositories.NotificationLogRepository
 }
@@ -39,23 +40,16 @@ func NewNotificationService(
 	logRepo repositories.NotificationLogRepository,
 ) NotificationService {
 	return &notificationService{
-		db:              db,
+		db:               db,
 		notificationRepo: notificationRepo,
 		logRepo:          logRepo,
 	}
 }
 
 func (s *notificationService) GetNotifications(ctx context.Context, userID uuid.UUID, userRole string, req dto.PaginationRequest) (dto.PaginatedResponse, error) {
-	var notifications []models.Notification
-	var total int64
-	var err error
-
-	if userRole == "SUPER_ADMIN" || userRole == "STORE_MANAGER" {
-		notifications, total, err = s.notificationRepo.FindAll(ctx, req)
-	} else {
-		notifications, total, err = s.notificationRepo.FindByUserID(ctx, userID, req)
-	}
-
+	// Everyone, staff included, sees their own inbox. Store alerts reach
+	// staff as their own notifications (see EventListenerService).
+	notifications, total, err := s.notificationRepo.FindByUserID(ctx, userID, req)
 	if err != nil {
 		return dto.PaginatedResponse{}, err
 	}
@@ -180,4 +174,8 @@ func mapNotificationToDTO(n *models.Notification) dto.NotificationResponseDTO {
 		CreatedAt: n.CreatedAt,
 		Logs:      logs,
 	}
+}
+
+func (s *notificationService) CountUnread(ctx context.Context, userID uuid.UUID) (int64, error) {
+	return s.notificationRepo.CountUnread(ctx, userID)
 }

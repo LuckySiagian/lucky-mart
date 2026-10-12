@@ -1,213 +1,167 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, BadgeCheck, Boxes, ClipboardCheck, CreditCard, PackageOpen, Store, Truck, Users, Wallet } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { PageHeader } from '../../components/common/PageHeader';
 import { StatusBadge } from '../../components/common/StatusBadge';
-import { formatCurrency } from '../../lib/utils';
-import { productService, orderService } from '../../services/apiServices';
-import {
-  DollarSign,
-  ShoppingCart,
-  TrendingUp,
-  AlertTriangle,
-  Users,
-  CheckCircle2,
-  Clock,
-  ArrowUpRight,
-} from 'lucide-react';
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-} from 'recharts';
+import { LoadingSkeleton } from '../../components/common/LoadingSkeleton';
+import { ErrorState } from '../../components/common/ErrorState';
+import { Card } from '../../components/common/Pagination';
+import { dashboardService } from '../../services/apiServices';
+import { useAuthStore, MANAGER_ROLES, hasRole } from '../../store/useAuthStore';
+import { formatCurrency, formatDate, formatNumber, getErrorMessage } from '../../lib/utils';
+import type { DashboardStats } from '../../types';
 
-const salesData = [
-  { name: 'Senin', sales: 12500000, orders: 34 },
-  { name: 'Selasa', sales: 18200000, orders: 48 },
-  { name: 'Rabu', sales: 15400000, orders: 41 },
-  { name: 'Kamis', sales: 22800000, orders: 62 },
-  { name: 'Jumat', sales: 29500000, orders: 85 },
-  { name: 'Sabtu', sales: 34100000, orders: 98 },
-  { name: 'Minggu', sales: 28400000, orders: 74 },
-];
-
-const topProducts = [
-  { name: 'Beras Premium Rajawali 10kg', category: 'Beras', sold: 420, stock: 85 },
-  { name: 'Minyak Goreng SunCo 2L', category: 'Minyak Goreng', sold: 380, stock: 12 },
-  { name: 'Gula Pasir Gulaku 1kg', category: 'Gula', sold: 290, stock: 45 },
-  { name: 'Telur Ayam Negeri 1kg', category: 'Telur', sold: 210, stock: 8 },
-];
+const dayLabel = (iso: string) => new Intl.DateTimeFormat('id-ID', { weekday: 'short', day: 'numeric' }).format(new Date(iso + 'T00:00:00'));
 
 export const OverviewPage: React.FC = () => {
-  const [totalOmzet, setTotalOmzet] = React.useState(0);
-  const [totalOrders, setTotalOrders] = React.useState(0);
-  const [lowStockCount, setLowStockCount] = React.useState(0);
-  const [totalProducts, setTotalProducts] = React.useState(0);
-  const [topProducts, setTopProducts] = React.useState<any[]>([]);
+  const isManager = hasRole(useAuthStore((s) => s.user), MANAGER_ROLES);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  React.useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const prodRes = await productService.getProducts(1, 50);
-        const prods = Array.isArray(prodRes.data)
-          ? prodRes.data
-          : (prodRes.data?.items || []);
-        setTotalProducts(prods.length);
+  const load = async () => {
+    setError(null);
+    try {
+      setStats(await dashboardService.getStats());
+    } catch (err) {
+      setError(getErrorMessage(err));
+    }
+  };
 
-        const lowStock = prods.filter((p: any) => {
-          const units = (p.units && p.units.length > 0) ? p.units : (p.product_units && p.product_units.length > 0) ? p.product_units : [];
-          return units.some((u: any) => u.stock_quantity < 10);
-        });
-        setLowStockCount(lowStock.length);
-        setTopProducts(prods.slice(0, 4));
-      } catch (e) {}
-
-      try {
-        const orderRes = await orderService.getOrders(1, 50);
-        const orders = Array.isArray(orderRes.data)
-          ? orderRes.data
-          : (orderRes.data?.items || []);
-        setTotalOrders(orders.length);
-
-        const omzet = orders.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
-        setTotalOmzet(omzet);
-      } catch (e) {}
-    };
-
-    fetchStats();
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 60000);
+    return () => clearInterval(t);
   }, []);
 
-  const salesData = [
-    { name: 'Senin', sales: 0, orders: 0 },
-    { name: 'Selasa', sales: 0, orders: 0 },
-    { name: 'Rabu', sales: 0, orders: 0 },
-    { name: 'Kamis', sales: 0, orders: 0 },
-    { name: 'Jumat', sales: 0, orders: 0 },
-    { name: 'Sabtu', sales: 0, orders: 0 },
-    { name: 'Minggu', sales: 0, orders: 0 },
+  if (error) return <ErrorState message={error} onRetry={load} />;
+  if (!stats) return <LoadingSkeleton count={6} />;
+
+  const p = stats.pending;
+  const todo = [
+    { show: isManager, count: p.payments_to_verify, label: 'Bukti transfer perlu dicek', to: '/orders?tab=bayar', icon: CreditCard },
+    { show: true, count: p.orders_to_pack, label: 'Pesanan baru perlu diproses', to: '/orders?tab=proses', icon: ClipboardCheck },
+    { show: true, count: p.orders_packing, label: 'Pesanan sedang disiapkan', to: '/orders?tab=proses', icon: PackageOpen },
+    { show: true, count: p.orders_delivering, label: 'Pesanan diantar / menunggu diambil', to: '/orders?tab=jalan', icon: Truck },
+    { show: true, count: p.low_stock_items, label: 'Barang stoknya menipis', to: '/inventory', icon: AlertTriangle },
+    { show: isManager, count: p.b2b_to_verify, label: 'Pendaftaran mitra toko menunggu', to: '/users', icon: BadgeCheck },
+    { show: true, count: p.awaiting_payment, label: 'Pesanan menunggu transfer pelanggan', to: '/orders?tab=bayar', icon: Wallet },
+  ].filter((t) => t.show);
+
+  const kpis = [
+    { label: 'Omzet hari ini', value: formatCurrency(stats.today_revenue), sub: `${stats.today_orders} pesanan`, icon: Wallet, tone: 'emerald' },
+    { label: 'Omzet bulan ini', value: formatCurrency(stats.month_revenue), sub: `${stats.month_orders} pesanan`, icon: Store, tone: 'sky' },
+    { label: 'Produk aktif', value: formatNumber(stats.active_products), sub: `${p.low_stock_items} stok menipis`, icon: Boxes, tone: 'amber' },
+    isManager
+      ? { label: 'Kasbon belum lunas', value: formatCurrency(stats.kasbon_outstanding), sub: `${stats.total_customers} pelanggan terdaftar`, icon: CreditCard, tone: 'rose' }
+      : { label: 'Pelanggan', value: formatNumber(stats.total_customers), sub: 'terdaftar', icon: Users, tone: 'rose' },
   ];
+  const toneClass: Record<string, string> = {
+    emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400',
+    sky: 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-400',
+    amber: 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400',
+    rose: 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400',
+  };
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Dashboard Overview"
-        subtitle="Ringkasan transaksi penjualan, stok gudang, dan performa toko LuckyMart."
-      />
+      <PageHeader title="Ringkasan Toko" subtitle="Diperbarui otomatis setiap menit." />
 
-      {/* Summary KPI Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500">Omzet Hari Ini</span>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
-              <DollarSign className="h-5 w-5" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {kpis.map((k) => (
+          <Card key={k.label} className="p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase text-slate-500">{k.label}</span>
+              <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${toneClass[k.tone]}`}>
+                <k.icon className="h-5 w-5" />
+              </div>
             </div>
-          </div>
-          <div className="mt-3 text-2xl font-black text-slate-900 dark:text-white">
-            {formatCurrency(totalOmzet)}
-          </div>
-          <div className="mt-2 flex items-center text-xs font-semibold text-slate-500">
-            <span>Total akumulasi dari transaksi real</span>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500">Pesanan Hari Ini</span>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-950/60 dark:text-blue-400">
-              <ShoppingCart className="h-5 w-5" />
-            </div>
-          </div>
-          <div className="mt-3 text-2xl font-black text-slate-900 dark:text-white">{totalOrders} Order</div>
-          <div className="mt-2 flex items-center text-xs font-semibold text-slate-500">
-            <Clock className="h-3.5 w-3.5 mr-1 text-amber-500" />
-            <span>Total pesanan masuk</span>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500">Peringatan Stok Rendah</span>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400">
-              <AlertTriangle className="h-5 w-5" />
-            </div>
-          </div>
-          <div className="mt-3 text-2xl font-black text-amber-600 dark:text-amber-400">{lowStockCount} Produk</div>
-          <div className="mt-2 text-xs text-slate-500">Stok di bawah batas minimum</div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500">Total Katalog Produk</span>
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-950/60 dark:text-purple-400">
-              <Users className="h-5 w-5" />
-            </div>
-          </div>
-          <div className="mt-3 text-2xl font-black text-slate-900 dark:text-white">{totalProducts}</div>
-          <div className="mt-2 text-xs font-semibold text-purple-600">Produk siap di-order</div>
-        </div>
+            <div className="mt-3 text-2xl font-black text-slate-900 dark:text-white">{k.value}</div>
+            <div className="mt-1 text-xs text-slate-500">{k.sub}</div>
+          </Card>
+        ))}
       </div>
 
-      {/* Sales Trend Chart */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">Grafik Penjualan Mingguan</h2>
-              <p className="text-xs text-slate-500">Tren nominal transaksi penjualan (Rp)</p>
-            </div>
-          </div>
-          <div className="h-72 w-full">
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="p-5 lg:col-span-1">
+          <h3 className="mb-3 text-sm font-bold">Perlu ditindaklanjuti</h3>
+          <ul className="space-y-1">
+            {todo.map((t) => (
+              <li key={t.label}>
+                <Link
+                  to={t.to}
+                  className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 ${t.count === 0 ? 'opacity-50' : ''}`}
+                >
+                  <t.icon className="h-4 w-4 text-slate-400" />
+                  <span className="flex-1">{t.label}</span>
+                  <span className={`min-w-[2rem] rounded-full px-2 py-0.5 text-center text-xs font-bold ${t.count > 0 ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}`}>
+                    {t.count}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
+
+        <Card className="p-5 lg:col-span-2">
+          <h3 className="mb-4 text-sm font-bold">Penjualan 7 hari terakhir</h3>
+          <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={salesData}>
-                <defs>
-                  <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#16a34a" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#16a34a" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" opacity={0.2} />
-                <XAxis dataKey="name" stroke="#64748b" fontSize={12} />
-                <YAxis stroke="#64748b" fontSize={12} tickFormatter={(val) => `${val / 1000000}JT`} />
-                <Tooltip
-                  formatter={(val: number) => [formatCurrency(val), 'Penjualan']}
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff' }}
-                />
-                <Area type="monotone" dataKey="sales" stroke="#16a34a" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
-              </AreaChart>
+              <BarChart data={stats.sales_last_7_days.map((d) => ({ ...d, label: dayLabel(d.date) }))}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (v >= 1000000 ? `${v / 1000000}jt` : v >= 1000 ? `${v / 1000}rb` : v)} width={48} />
+                <Tooltip formatter={(v: number) => formatCurrency(v)} labelFormatter={(l) => l} />
+                <Bar dataKey="revenue" name="Omzet" fill="#16a34a" radius={[6, 6, 0, 0]} />
+              </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </Card>
+      </div>
 
-        {/* Top Products Box */}
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-sm">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white mb-4">Produk Terlaris</h2>
-          {topProducts.length === 0 ? (
-            <div className="text-center py-10 text-xs text-slate-400">Belum ada data produk di katalog.</div>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card className="p-5">
+          <h3 className="mb-3 text-sm font-bold">Produk terlaris (30 hari)</h3>
+          {stats.top_products.length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-500">Belum ada penjualan.</p>
           ) : (
-            <div className="space-y-4">
-              {topProducts.map((p, idx) => {
-                const units = (p.units && p.units.length > 0) ? p.units : (p.product_units && p.product_units.length > 0) ? p.product_units : [];
-                const stock = units[0]?.stock_quantity || 0;
-                return (
-                  <div key={idx} className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 last:border-0 last:pb-0">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900 dark:text-white truncate max-w-[180px]">{p.name}</div>
-                      <div className="text-xs text-slate-500">{p.sku}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-bold text-brand-600">Stok: {stock}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {stats.top_products.map((tp, i) => (
+                <li key={tp.product_name} className="flex items-center gap-3 py-2.5 text-sm">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold dark:bg-slate-800">{i + 1}</span>
+                  <span className="flex-1 font-medium">{tp.product_name}</span>
+                  <span className="text-xs text-slate-500">{formatNumber(tp.quantity)} terjual</span>
+                  <span className="w-28 text-right font-semibold">{formatCurrency(tp.revenue)}</span>
+                </li>
+              ))}
+            </ul>
           )}
-        </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-bold">Pesanan terbaru</h3>
+            <Link to="/orders" className="text-xs font-semibold text-brand-600">Lihat semua</Link>
+          </div>
+          {stats.recent_orders.length === 0 ? (
+            <p className="py-6 text-center text-sm text-slate-500">Belum ada pesanan.</p>
+          ) : (
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {stats.recent_orders.map((o) => (
+                <li key={o.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                  <div>
+                    <div className="font-mono text-xs font-semibold">{o.order_number}</div>
+                    <div className="text-xs text-slate-500">{o.customer_name} · {formatDate(o.order_date)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-semibold">{formatCurrency(o.grand_total)}</div>
+                    <StatusBadge status={o.status} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
       </div>
     </div>
   );

@@ -137,15 +137,31 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	token, err := h.authService.ForgotPassword(c.Request.Context(), req)
-	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+	if err := h.authService.ForgotPassword(c.Request.Context(), req); err != nil {
+		helpers.SendInternalServerError(c, "Gagal memproses permintaan")
 		return
 	}
 
-	helpers.ResponseSuccess(c, http.StatusOK, "Password reset token generated successfully", gin.H{
-		"reset_token": token,
-	})
+	// Same answer whether or not the number is registered.
+	helpers.ResponseSuccess(c, http.StatusOK,
+		"Permintaan reset kata sandi diterima. Hubungi admin toko untuk verifikasi identitas dan mendapatkan kata sandi baru.", nil)
+}
+
+func (h *AuthHandler) UpdateProfile(c *gin.Context) {
+	userID, _ := getUserContext(c)
+	var req dto.UpdateProfileDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	res, err := h.authService.UpdateProfile(c.Request.Context(), userID, req)
+	if err != nil {
+		sendServiceError(c, err)
+		return
+	}
+
+	helpers.ResponseSuccess(c, http.StatusOK, "Profile updated successfully", res)
 }
 
 func (h *AuthHandler) ResetPassword(c *gin.Context) {

@@ -1,133 +1,123 @@
+import type { AxiosResponse } from 'axios';
 import { api } from '../lib/axios';
+import type {
+  Address,
+  AuthResponse,
+  Cart,
+  Category,
+  CheckoutSummary,
+  CreditLedger,
+  Notification,
+  Order,
+  Paginated,
+  Payment,
+  PaymentMethod,
+  Product,
+  Shipment,
+  ShippingMethod,
+  User,
+  StoreInfo,
+} from '../types';
+
+// Every API response is { success, message, data }; these helpers return `data`.
+const data = <T>(p: Promise<AxiosResponse<{ data: T }>>) => p.then((r) => r.data.data);
+
+const clean = (params: Record<string, unknown>) =>
+  Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== ''));
+
+export interface RegisterInput {
+  full_name: string;
+  phone_number: string;
+  email?: string;
+  password: string;
+  is_b2b_registration: boolean;
+  store_name?: string;
+  store_address?: string;
+}
 
 export const authService = {
-  login: async (credentials: any) => {
-    const res = await api.post('/auth/login', credentials);
-    return res.data;
-  },
-  register: async (data: any) => {
-    const res = await api.post('/auth/register', data);
-    return res.data;
-  },
-  getProfile: async () => {
-    const res = await api.get('/users/me');
-    return res.data;
-  },
+  login: (body: { phone_number: string; password: string }) => data<AuthResponse>(api.post('/auth/login', body)),
+  register: (body: RegisterInput) => data<AuthResponse>(api.post('/auth/register', body)),
+  me: () => data<User>(api.get('/auth/me')),
+  updateProfile: (body: { full_name?: string; email?: string }) => data<User>(api.put('/auth/me', body)),
+  changePassword: (body: { old_password: string; new_password: string }) => data(api.post('/auth/change-password', body)),
+  forgotPassword: (phone_number: string) => api.post('/auth/forgot-password', { phone_number }).then((r) => r.data.message as string),
+  logout: () => data(api.post('/auth/logout')),
 };
 
 export const productService = {
-  getProducts: async (page = 1, limit = 12, category_id?: string) => {
-    const res = await api.get('/products', { params: { page, limit, category_id } });
-    return res.data;
-  },
-  getProductById: async (id: string) => {
-    const res = await api.get(`/products/${id}`);
-    return res.data;
-  },
-  getCategories: async () => {
-    const res = await api.get('/categories');
-    return res.data;
-  },
+  getProducts: (params: { page?: number; limit?: number; category_id?: string; search?: string } = {}) =>
+    data<Paginated<Product>>(api.get('/products', { params: clean(params) })),
+  getProductById: (id: string) => data<Product>(api.get(`/products/${id}`)),
+  getCategories: () => data<Category[]>(api.get('/categories')),
 };
 
 export const cartService = {
-  getCart: async () => {
-    const res = await api.get('/cart');
-    return res.data;
-  },
-  addToCart: async (data: { product_id: string; product_unit_id: string; quantity: number; notes?: string }) => {
-    const res = await api.post('/cart/items', data);
-    return res.data;
-  },
-  updateCartItem: async (id: string, data: { quantity: number; notes?: string }) => {
-    const res = await api.put(`/cart/items/${id}`, data);
-    return res.data;
-  },
-  removeCartItem: async (id: string) => {
-    const res = await api.delete(`/cart/items/${id}`);
-    return res.data;
-  },
-  clearCart: async () => {
-    const res = await api.delete('/cart');
-    return res.data;
-  },
-  getCheckoutSummary: async () => {
-    const res = await api.post('/cart/checkout');
-    return res.data;
-  },
+  getCart: () => data<Cart>(api.get('/cart')),
+  addToCart: (body: { product_id: string; product_unit_id: string; quantity: number; notes?: string }) =>
+    data<Cart>(api.post('/cart/items', body)),
+  updateCartItem: (id: string, quantity: number) => data<Cart>(api.put(`/cart/items/${id}`, { quantity })),
+  removeCartItem: (id: string) => data<Cart>(api.delete(`/cart/items/${id}`)),
+  clearCart: () => data(api.delete('/cart')),
+  checkoutSummary: (body: { cart_item_ids?: string[]; shipping_method_id?: string; city?: string; delivery_type?: DeliveryType }) =>
+    data<CheckoutSummary>(api.post('/cart/checkout', body)),
 };
 
+export type DeliveryType = 'DELIVERY' | 'PICKUP';
+
+export interface CreateOrderInput {
+  payment_method: string;
+  delivery_type?: DeliveryType;
+  cart_item_ids?: string[];
+  shipping_method_id?: string;
+  address_id?: string;
+  recipient_name?: string;
+  phone?: string;
+  full_address?: string;
+  city?: string;
+  postal_code?: string;
+  notes?: string;
+}
+
 export const orderService = {
-  createOrder: async (data: any) => {
-    const res = await api.post('/orders', data);
-    return res.data;
-  },
-  getOrders: async (page = 1, limit = 10) => {
-    const res = await api.get('/orders', { params: { page, limit } });
-    return res.data;
-  },
-  getOrderById: async (id: string) => {
-    const res = await api.get(`/orders/${id}`);
-    return res.data;
-  },
-  cancelOrder: async (id: string, reason: string) => {
-    const res = await api.put(`/orders/${id}/cancel`, { reason });
-    return res.data;
-  },
+  createOrder: (body: CreateOrderInput) => data<Order>(api.post('/orders', body)),
+  getOrders: (params: { page?: number; limit?: number; status?: string } = {}) =>
+    data<Paginated<Order>>(api.get('/orders', { params: clean(params) })),
+  getOrderById: (id: string) => data<Order>(api.get(`/orders/${id}`)),
+  cancelOrder: (id: string, reason: string) => data<Order>(api.put(`/orders/${id}/cancel`, { reason })),
 };
 
 export const addressService = {
-  getAddresses: async () => {
-    const res = await api.get('/addresses');
-    return res.data;
-  },
-  createAddress: async (data: any) => {
-    const res = await api.post('/addresses', data);
-    return res.data;
-  },
-  setDefaultAddress: async (id: string) => {
-    const res = await api.patch(`/addresses/${id}/default`);
-    return res.data;
-  },
+  getAddresses: () => data<Address[]>(api.get('/addresses')),
+  createAddress: (body: Omit<Address, 'id'>) => data<Address>(api.post('/addresses', body)),
+  updateAddress: (id: string, body: Omit<Address, 'id'>) => data<Address>(api.put(`/addresses/${id}`, body)),
+  deleteAddress: (id: string) => data(api.delete(`/addresses/${id}`)),
+  setDefault: (id: string) => data<Address>(api.patch(`/addresses/${id}/default`)),
 };
 
 export const shippingService = {
-  getShippingMethods: async () => {
-    const res = await api.get('/shipping/methods');
-    return res.data;
-  },
-  calculateRate: async (data: any) => {
-    const res = await api.post('/shipping/calculate', data);
-    return res.data;
-  },
-  getShipmentByOrderId: async (orderId: string) => {
-    const res = await api.get(`/shipping/orders/${orderId}`);
-    return res.data;
-  },
+  getMethods: () => data<ShippingMethod[]>(api.get('/shipping/methods')),
+  getShipmentByOrderId: (orderId: string) => data<Shipment>(api.get(`/shipping/orders/${orderId}`)),
 };
 
 export const paymentService = {
-  getPaymentMethods: async () => {
-    const res = await api.get('/payment-methods');
-    return res.data;
-  },
-  createPayment: async (data: any) => {
-    const res = await api.post('/payments', data);
-    return res.data;
-  },
-  uploadProof: async (data: { payment_id: string; proof_image_url: string; notes?: string }) => {
-    const res = await api.post('/payments/upload-proof', data);
-    return res.data;
-  },
+  getMethods: () => data<PaymentMethod[]>(api.get('/payment-methods')),
+  uploadProof: (body: { payment_id: string; proof_image_url: string; notes?: string }) =>
+    data<Payment>(api.post('/payments/upload-proof', body)),
+};
+
+export const creditService = {
+  getMine: () => data<CreditLedger>(api.get('/credit-ledgers/me')),
 };
 
 export const notificationService = {
-  getNotifications: async () => {
-    const res = await api.get('/notifications');
-    return res.data;
-  },
-  markAllRead: async () => {
-    const res = await api.patch('/notifications/read-all');
-    return res.data;
-  },
+  getNotifications: (params: { page?: number; limit?: number } = {}) =>
+    data<Paginated<Notification>>(api.get('/notifications', { params: clean(params) })),
+  unreadCount: () => data<{ unread: number }>(api.get('/notifications/unread-count')),
+  markRead: (id: string) => data(api.patch(`/notifications/${id}/read`)),
+  markAllRead: () => data(api.patch('/notifications/read-all')),
+};
+
+export const storeService = {
+  get: () => data<StoreInfo>(api.get('/store')),
 };

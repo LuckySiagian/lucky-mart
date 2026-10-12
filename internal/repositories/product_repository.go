@@ -20,7 +20,11 @@ func NewProductRepository(db *gorm.DB) ProductRepository {
 	return &productRepository{db: db}
 }
 
-func (r *productRepository) FindAll(ctx context.Context, req dto.PaginationRequest, categoryID *uuid.UUID) ([]models.Product, int64, error) {
+func orderUnits(db *gorm.DB) *gorm.DB {
+	return db.Order("conversion_factor ASC")
+}
+
+func (r *productRepository) FindAll(ctx context.Context, req dto.PaginationRequest, categoryID *uuid.UUID, includeInactive bool) ([]models.Product, int64, error) {
 	var products []models.Product
 	var total int64
 
@@ -28,19 +32,25 @@ func (r *productRepository) FindAll(ctx context.Context, req dto.PaginationReque
 		Preload("Category").
 		Preload("Brand").
 		Preload("Supplier").
-		Preload("ProductUnits").
-		Preload("Images").
-		Where("is_active = true")
+		Preload("ProductUnits", orderUnits).
+		Preload("Images")
 
+	if !includeInactive {
+		db = db.Where("is_active = true")
+	}
 	if categoryID != nil {
 		db = db.Where("category_id = ?", *categoryID)
+	}
+	if req.Search != "" {
+		term := utils.SearchTerm(req.Search)
+		db = db.Where("name ILIKE ? OR sku ILIKE ?", term, term)
 	}
 
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	db = utils.ApplyPagination(db, req)
+	db = utils.ApplyPagination(db, req, "name", "sku")
 	if err := db.Find(&products).Error; err != nil {
 		return nil, 0, err
 	}
@@ -54,7 +64,7 @@ func (r *productRepository) FindByID(ctx context.Context, id uuid.UUID) (*models
 		Preload("Category").
 		Preload("Brand").
 		Preload("Supplier").
-		Preload("ProductUnits").
+		Preload("ProductUnits", orderUnits).
 		Preload("Images").
 		Where("id = ?", id).
 		First(&product).Error
@@ -70,7 +80,7 @@ func (r *productRepository) FindByID(ctx context.Context, id uuid.UUID) (*models
 
 func (r *productRepository) FindBySKU(ctx context.Context, sku string) (*models.Product, error) {
 	var product models.Product
-	err := r.db.WithContext(ctx).Where("sku = ?", sku).First(&product).Error
+	err := r.db.WithContext(ctx).Unscoped().Where("sku = ?", sku).First(&product).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -93,7 +103,7 @@ func (r *productRepository) Update(ctx context.Context, tx *gorm.DB, product *mo
 	if tx != nil {
 		db = tx
 	}
-	return db.WithContext(ctx).Save(product).Error
+	return db.WithContext(ctx).Omit("Category", "Brand", "Supplier", "ProductUnits", "Images").Save(product).Error
 }
 
 func (r *productRepository) Delete(ctx context.Context, id uuid.UUID) error {

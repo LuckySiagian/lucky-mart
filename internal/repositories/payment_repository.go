@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type paymentRepository struct {
@@ -33,7 +34,7 @@ func (r *paymentRepository) Update(ctx context.Context, tx *gorm.DB, payment *mo
 	if tx != nil {
 		db = tx
 	}
-	return db.WithContext(ctx).Save(payment).Error
+	return db.WithContext(ctx).Omit(clause.Associations).Save(payment).Error
 }
 
 func (r *paymentRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Payment, error) {
@@ -44,7 +45,7 @@ func (r *paymentRepository) FindByID(ctx context.Context, id uuid.UUID) (*models
 		Preload("User").
 		Preload("PaymentMethod").
 		Preload("Transactions").
-		Preload("Logs").
+		Preload("Logs", func(db *gorm.DB) *gorm.DB { return db.Order("created_at ASC") }).
 		Where("id = ?", id).
 		First(&payment).Error
 
@@ -64,6 +65,7 @@ func (r *paymentRepository) FindByInvoiceID(ctx context.Context, invoiceID uuid.
 		Preload("Invoice").
 		Preload("PaymentMethod").
 		Where("invoice_id = ?", invoiceID).
+		Order("created_at DESC").
 		First(&payment).Error
 
 	if err != nil {
@@ -75,41 +77,42 @@ func (r *paymentRepository) FindByInvoiceID(ctx context.Context, invoiceID uuid.
 	return &payment, nil
 }
 
-func (r *paymentRepository) FindByUserID(ctx context.Context, userID uuid.UUID, req dto.PaginationRequest) ([]models.Payment, int64, error) {
+func (r *paymentRepository) FindByOrderID(ctx context.Context, orderID uuid.UUID) ([]models.Payment, error) {
 	var payments []models.Payment
-	var total int64
-
-	db := r.db.WithContext(ctx).Model(&models.Payment{}).
-		Preload("Invoice").
+	err := r.db.WithContext(ctx).
 		Preload("PaymentMethod").
-		Where("user_id = ?", userID)
-
-	if err := db.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	db = utils.ApplyPagination(db, req)
-	if err := db.Find(&payments).Error; err != nil {
-		return nil, 0, err
-	}
-
-	return payments, total, nil
+		Preload("Logs", func(db *gorm.DB) *gorm.DB { return db.Order("created_at ASC") }).
+		Where("order_id = ?", orderID).
+		Order("created_at DESC").
+		Find(&payments).Error
+	return payments, err
 }
 
-func (r *paymentRepository) FindAll(ctx context.Context, req dto.PaginationRequest) ([]models.Payment, int64, error) {
+func (r *paymentRepository) list(ctx context.Context, req dto.PaginationRequest, status string, scope func(*gorm.DB) *gorm.DB) ([]models.Payment, int64, error) {
 	var payments []models.Payment
 	var total int64
 
 	db := r.db.WithContext(ctx).Model(&models.Payment{}).
 		Preload("User").
+		Preload("Order").
 		Preload("Invoice").
 		Preload("PaymentMethod")
 
+	if scope != nil {
+		db = scope(db)
+	}
+	if status != "" {
+		db = db.Where("status = ?", status)
+	}
+	if req.Search != "" {
+		db = db.Where("payment_number ILIKE ?", utils.SearchTerm(req.Search))
+	}
+
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	db = utils.ApplyPagination(db, req)
+	db = utils.ApplyPagination(db, req, "grand_total", "status")
 	if err := db.Find(&payments).Error; err != nil {
 		return nil, 0, err
 	}
@@ -117,26 +120,18 @@ func (r *paymentRepository) FindAll(ctx context.Context, req dto.PaginationReque
 	return payments, total, nil
 }
 
+func (r *paymentRepository) FindByUserID(ctx context.Context, userID uuid.UUID, req dto.PaginationRequest, status string) ([]models.Payment, int64, error) {
+	return r.list(ctx, req, status, func(db *gorm.DB) *gorm.DB {
+		return db.Where("user_id = ?", userID)
+	})
+}
+
+func (r *paymentRepository) FindAll(ctx context.Context, req dto.PaginationRequest, status string) ([]models.Payment, int64, error) {
+	return r.list(ctx, req, status, nil)
+}
+
 func (r *paymentRepository) FindWaitingConfirmation(ctx context.Context, req dto.PaginationRequest) ([]models.Payment, int64, error) {
-	var payments []models.Payment
-	var total int64
-
-	db := r.db.WithContext(ctx).Model(&models.Payment{}).
-		Preload("User").
-		Preload("Invoice").
-		Preload("PaymentMethod").
-		Where("status = 'WAITING_CONFIRMATION'")
-
-	if err := db.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	db = utils.ApplyPagination(db, req)
-	if err := db.Find(&payments).Error; err != nil {
-		return nil, 0, err
-	}
-
-	return payments, total, nil
+	return r.list(ctx, req, "WAITING_CONFIRMATION", nil)
 }
 
 type paymentMethodRepository struct {
@@ -149,7 +144,13 @@ func NewPaymentMethodRepository(db *gorm.DB) PaymentMethodRepository {
 
 func (r *paymentMethodRepository) FindAll(ctx context.Context) ([]models.PaymentMethod, error) {
 	var methods []models.PaymentMethod
-	err := r.db.WithContext(ctx).Where("is_active = true").Find(&methods).Error
+	err := r.db.WithContext(ctx).Where("is_active = true").Order("name ASC").Find(&methods).Error
+	return methods, err
+}
+
+func (r *paymentMethodRepository) FindAllIncludingInactive(ctx context.Context) ([]models.PaymentMethod, error) {
+	var methods []models.PaymentMethod
+	err := r.db.WithContext(ctx).Order("name ASC").Find(&methods).Error
 	return methods, err
 }
 

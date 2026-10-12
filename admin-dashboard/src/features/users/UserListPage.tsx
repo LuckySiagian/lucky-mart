@@ -1,390 +1,284 @@
-import React, { useState, useEffect } from 'react';
-import { PageHeader } from '../../components/common/PageHeader';
-import { Users, ShieldCheck, UserCheck, Edit, Plus, X, Search, Lock, UserPlus, Trash2 } from 'lucide-react';
+import React, { useState } from 'react';
 import { toast } from 'sonner';
+import { BadgeCheck, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
+import { PageHeader } from '../../components/common/PageHeader';
+import { StatusBadge } from '../../components/common/StatusBadge';
+import { LoadingSkeleton } from '../../components/common/LoadingSkeleton';
+import { EmptyState } from '../../components/common/EmptyState';
+import { ErrorState } from '../../components/common/ErrorState';
+import { Field, Modal, btnDanger, btnPrimary, btnSecondary, inputClass } from '../../components/common/Modal';
+import { Card, FilterTabs, Pagination, SearchInput, Table } from '../../components/common/Pagination';
 import { userService } from '../../services/apiServices';
+import { useList } from '../../hooks/useList';
+import { useAuthStore } from '../../store/useAuthStore';
+import { formatCurrency, formatDate, getErrorMessage, ROLE_LABELS } from '../../lib/utils';
+import type { Role, User } from '../../types';
 
-interface UserAccount {
-  id: string;
-  name: string;
-  phone: string;
-  email: string;
-  role: 'SUPER_ADMIN' | 'STORE_MANAGER' | 'B2B_CUSTOMER' | 'B2C_CUSTOMER';
-  status: 'ACTIVE' | 'SUSPENDED';
-}
-
-const mockUsers: UserAccount[] = [
-  {
-    id: 'USR-001',
-    name: 'Super Admin LuckyMart (Pemilik Utama)',
-    phone: '081234567890',
-    email: 'superadmin@luckymart.com',
-    role: 'SUPER_ADMIN',
-    status: 'ACTIVE',
-  },
+const TABS = [
+  { value: '', label: 'Semua' },
+  { value: 'B2C_CUSTOMER', label: 'Pelanggan' },
+  { value: 'B2B_CUSTOMER', label: 'Mitra Toko' },
+  { value: 'WAREHOUSE_STAFF', label: 'Staf Gudang' },
+  { value: 'DRIVER', label: 'Kurir' },
+  { value: 'STORE_MANAGER', label: 'Manajer' },
+  { value: 'SUPER_ADMIN', label: 'Super Admin' },
 ];
 
+type Mode = 'create' | 'edit' | 'password' | 'b2b' | 'delete' | null;
+
+const PASSWORD_HINT = 'Minimal 8 karakter, ada huruf besar, huruf kecil, angka, dan simbol.';
+
 export const UserListPage: React.FC = () => {
-  const [users, setUsers] = useState<UserAccount[]>(mockUsers);
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(false);
+  const me = useAuthStore((s) => s.user);
+  const list = useList((p) => userService.getUsers(p));
+  const [mode, setMode] = useState<Mode>(null);
+  const [target, setTarget] = useState<User | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ full_name: '', phone_number: '', email: '', password: '', role: 'WAREHOUSE_STAFF' as Role, is_active: true });
+  const [b2b, setB2b] = useState({ status: 'APPROVED' as 'APPROVED' | 'REJECTED' | 'PENDING', credit_limit: '0' });
 
-  useEffect(() => {
-    const fetchUsers = async () => {
-      setLoading(true);
-      try {
-        const res = await userService.getUsers(1, 50);
-        const list = Array.isArray(res.data) ? res.data : (res.data?.items || []);
-        if (list.length > 0) {
-          const mapped = list.map((u: any) => ({
-            id: u.id,
-            name: u.full_name || u.name || 'Pengguna LuckyMart',
-            phone: u.phone_number || u.phone || '-',
-            email: u.email || '-',
-            role: u.role || 'B2C_CUSTOMER',
-            status: u.is_active ? 'ACTIVE' : 'SUSPENDED',
-          }));
-          setUsers(mapped);
-        }
-      } catch (e) {
-        // Keep mock user fallback
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchUsers();
-  }, []);
+  const assignableRoles: Role[] =
+    me?.role === 'SUPER_ADMIN'
+      ? ['SUPER_ADMIN', 'STORE_MANAGER', 'WAREHOUSE_STAFF', 'DRIVER', 'B2B_CUSTOMER', 'B2C_CUSTOMER']
+      : ['WAREHOUSE_STAFF', 'DRIVER', 'B2B_CUSTOMER', 'B2C_CUSTOMER'];
+  const canManage = (u: User) => me?.role === 'SUPER_ADMIN' || (u.role !== 'SUPER_ADMIN' && u.role !== 'STORE_MANAGER');
 
-  // Edit Role Modal State
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<UserAccount | null>(null);
-  const [newRole, setNewRole] = useState<'B2B_CUSTOMER' | 'B2C_CUSTOMER'>('B2C_CUSTOMER');
-
-  // Add Customer Modal State
-  const [isAddOpen, setIsAddOpen] = useState(false);
-  const [addName, setAddName] = useState('');
-  const [addPhone, setAddPhone] = useState('');
-  const [addEmail, setAddEmail] = useState('');
-  const [addRole, setAddRole] = useState<'B2B_CUSTOMER' | 'B2C_CUSTOMER'>('B2C_CUSTOMER');
-
-  const handleOpenEdit = (u: UserAccount) => {
-    if (u.role === 'SUPER_ADMIN' || u.role === 'STORE_MANAGER') {
-      toast.info('Role SuperAdmin dan Admin dibatasi 1 akun utama sesuai proteksi keamanan.');
-      return;
-    }
-    setSelectedUser(u);
-    setNewRole(u.role as any);
-    setIsModalOpen(true);
+  const open = (m: Mode, u: User | null) => {
+    setMode(m);
+    setTarget(u);
+    if (m === 'create') setForm({ full_name: '', phone_number: '', email: '', password: '', role: 'WAREHOUSE_STAFF', is_active: true });
+    if (m === 'edit' && u) setForm({ full_name: u.full_name, phone_number: u.phone_number, email: u.email || '', password: '', role: u.role, is_active: u.is_active });
+    if (m === 'password') setForm((f) => ({ ...f, password: '' }));
+    if (m === 'b2b' && u) setB2b({ status: 'APPROVED', credit_limit: String(u.b2b_profile?.approved_credit_limit || 0) });
+  };
+  const close = () => {
+    setMode(null);
+    setTarget(null);
   };
 
-  const handleDeleteUser = (id: string, name: string) => {
-    if (window.confirm(`Hapus permanen akun pengguna "${name}"?`)) {
-      setUsers((prev) => prev.filter((u) => u.id !== id));
-      toast.success(`Akun pengguna "${name}" berhasil dihapus!`);
+  const run = async (fn: () => Promise<unknown>, success: string) => {
+    setBusy(true);
+    try {
+      await fn();
+      toast.success(success);
+      close();
+      list.reload();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusy(false);
     }
   };
 
-  const handleSaveRole = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedUser) return;
-
-    setUsers((prev) =>
-      prev.map((u) => (u.id === selectedUser.id ? { ...u, role: newRole } : u))
-    );
-
-    toast.success(`Role pengguna "${selectedUser.name}" berhasil diubah menjadi ${newRole}!`);
-    setIsModalOpen(false);
-  };
-
-  const handleAddCustomer = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!addName.trim() || !addPhone.trim()) {
-      toast.error('Nama dan No. HP wajib diisi.');
-      return;
+  const submit = () => {
+    if (mode === 'create') {
+      return run(
+        () => userService.createUser({ full_name: form.full_name.trim(), phone_number: form.phone_number.trim(), email: form.email.trim() || undefined, password: form.password, role: form.role }),
+        'Akun berhasil dibuat.'
+      );
     }
-
-    const newUser: UserAccount = {
-      id: `USR-${Date.now()}`,
-      name: addName.trim(),
-      phone: addPhone.trim(),
-      email: addEmail.trim() || `${addName.toLowerCase().replace(/\s+/g, '')}@gmail.com`,
-      role: addRole,
-      status: 'ACTIVE',
-    };
-
-    setUsers((prev) => [...prev, newUser]);
-    toast.success(`Pelanggan baru "${addName}" berhasil didaftarkan!`);
-    setIsAddOpen(false);
-    setAddName('');
-    setAddPhone('');
-    setAddEmail('');
+    if (mode === 'edit' && target) {
+      return run(
+        () => userService.updateUser(target.id, { full_name: form.full_name.trim(), email: form.email.trim(), role: form.role, is_active: form.is_active }),
+        'Data pengguna diperbarui.'
+      );
+    }
+    if (mode === 'password' && target) {
+      return run(() => userService.resetPassword(target.id, form.password), 'Kata sandi direset. Sampaikan kata sandi baru ke pengguna secara langsung.');
+    }
+    if (mode === 'b2b' && target) {
+      return run(
+        () => userService.verifyB2B(target.id, b2b.status, b2b.status === 'APPROVED' ? Number(b2b.credit_limit) || 0 : undefined),
+        b2b.status === 'APPROVED' ? 'Mitra toko disetujui.' : 'Status mitra diperbarui.'
+      );
+    }
+    if (mode === 'delete' && target) {
+      return run(() => userService.deleteUser(target.id), 'Pengguna dihapus.');
+    }
   };
-
-  const filtered = users.filter(
-    (u) =>
-      u.name.toLowerCase().includes(search.toLowerCase()) ||
-      u.email.toLowerCase().includes(search.toLowerCase()) ||
-      u.phone.toLowerCase().includes(search.toLowerCase())
-  );
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Manajemen Pengguna & Hak Akses (RBAC)"
-        subtitle="Sistem Hak Akses Proteksi: 1 SuperAdmin, 1 Admin Operasional, serta Manajemen Akun Pelanggan B2B Mitra Warung & B2C Eceran."
-      >
-        <button
-          onClick={() => setIsAddOpen(true)}
-          className="inline-flex items-center space-x-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 transition-colors shadow-lg shadow-brand-600/20"
-        >
-          <UserPlus className="h-4 w-4" />
-          <span>Tambah Pelanggan Baru</span>
+    <div className="space-y-5">
+      <PageHeader title="Pengguna" subtitle="Akun staf toko, pelanggan, dan verifikasi mitra toko (B2B).">
+        <button className={btnPrimary} onClick={() => open('create', null)}>
+          <Plus className="h-4 w-4" /> Tambah Akun
         </button>
       </PageHeader>
 
-      {/* Role Protection Info Box */}
-      <div className="rounded-2xl border border-blue-200 dark:border-blue-950 bg-blue-50/50 dark:bg-blue-950/20 p-4 flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 dark:bg-blue-900/50 text-blue-600">
-            <Lock className="h-5 w-5" />
-          </div>
-          <div>
-            <h4 className="text-xs font-bold text-blue-900 dark:text-blue-300">Proteksi Role Sistem Sembako</h4>
-            <p className="text-xs text-blue-700 dark:text-blue-400">
-              Sesuai aturan keamanan: Role <b>SUPER_ADMIN</b> dan <b>STORE_MANAGER (Admin)</b> dikunci masing-masing 1 akun utama. Penambahan pengguna baru diperuntukkan untuk <b>B2B Mitra Warung</b> & <b>B2C Customer</b>.
-            </p>
-          </div>
-        </div>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <FilterTabs value={(list.params.role as string) || ''} onChange={(v) => list.setFilter('role', v)} options={TABS} />
+        <SearchInput value={list.searchInput} onChange={list.setSearchInput} placeholder="Cari nama / nomor HP..." />
       </div>
 
-      {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
-        <div className="relative w-full sm:w-80">
-          <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari nama, email, atau HP..."
-            className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 pl-10 pr-4 py-2 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-        <div className="text-xs text-slate-500 font-semibold">
-          Total Pengguna: <span className="text-brand-600 font-bold">{users.length} Akun</span>
-        </div>
-      </div>
-
-      {/* Users Table */}
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
-        <table className="w-full text-left text-sm text-slate-600 dark:text-slate-400">
-          <thead className="bg-slate-50 dark:bg-slate-800/50 text-xs uppercase text-slate-500 font-bold border-b border-slate-200 dark:border-slate-800">
-            <tr>
-              <th className="px-6 py-4">Nama Pengguna</th>
-              <th className="px-6 py-4">Nomor Kontak</th>
-              <th className="px-6 py-4">Email</th>
-              <th className="px-6 py-4">Role Akses</th>
-              <th className="px-6 py-4 text-right">Aksi Kelola (CRUD)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-            {filtered.map((u) => (
-              <tr key={u.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/30">
-                <td className="px-6 py-4">
-                  <div className="font-bold text-slate-900 dark:text-white">{u.name}</div>
-                  <div className="text-[11px] text-slate-400">ID: {u.id}</div>
+      {list.loading ? (
+        <LoadingSkeleton count={5} />
+      ) : list.error ? (
+        <ErrorState message={list.error} onRetry={list.reload} />
+      ) : list.items.length === 0 ? (
+        <EmptyState title="Tidak ada pengguna" />
+      ) : (
+        <Card className="p-2 sm:p-4">
+          <Table
+            head={
+              <tr>
+                <th className="px-3 py-3">Nama</th>
+                <th className="px-3 py-3">Peran</th>
+                <th className="px-3 py-3">Status</th>
+                <th className="px-3 py-3">Login terakhir</th>
+                <th className="px-3 py-3" />
+              </tr>
+            }
+          >
+            {list.items.map((u) => (
+              <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                <td className="px-3 py-3">
+                  <div className="font-semibold">{u.full_name} {u.id === me?.id && <span className="text-xs font-normal text-slate-400">(Anda)</span>}</div>
+                  <div className="text-xs text-slate-500">{u.phone_number}{u.email ? ` · ${u.email}` : ''}</div>
+                  {u.b2b_profile && <div className="text-xs text-slate-500">Toko: {u.b2b_profile.store_name}</div>}
                 </td>
-                <td className="px-6 py-4 font-mono text-xs font-semibold">{u.phone}</td>
-                <td className="px-6 py-4 text-xs">{u.email}</td>
-                <td className="px-6 py-4">
-                  {u.role === 'SUPER_ADMIN' && (
-                    <span className="inline-flex items-center space-x-1 rounded-full bg-purple-100 dark:bg-purple-950/60 px-3 py-1 text-xs font-bold text-purple-700 dark:text-purple-300">
-                      <ShieldCheck className="h-3.5 w-3.5" />
-                      <span>SUPER ADMIN (UTAMA)</span>
-                    </span>
-                  )}
-                  {u.role === 'STORE_MANAGER' && (
-                    <span className="inline-flex items-center space-x-1 rounded-full bg-blue-100 dark:bg-blue-950/60 px-3 py-1 text-xs font-bold text-blue-700 dark:text-blue-300">
-                      <UserCheck className="h-3.5 w-3.5" />
-                      <span>ADMIN OPERASIONAL</span>
-                    </span>
-                  )}
-                  {u.role === 'B2B_CUSTOMER' && (
-                    <span className="inline-flex items-center space-x-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 px-3 py-1 text-xs font-bold text-emerald-700 dark:text-emerald-300">
-                      <span>B2B MITRA WARUNG</span>
-                    </span>
-                  )}
-                  {u.role === 'B2C_CUSTOMER' && (
-                    <span className="inline-flex items-center space-x-1 rounded-full bg-slate-100 dark:bg-slate-800 px-3 py-1 text-xs font-bold text-slate-600 dark:text-slate-400">
-                      <span>B2C CUSTOMER ECERAN</span>
-                    </span>
-                  )}
+                <td className="px-3 py-3">
+                  <div className="text-xs font-semibold">{ROLE_LABELS[u.role]}</div>
+                  {u.b2b_profile && <div className="mt-1"><StatusBadge status={u.b2b_profile.verification_status} /></div>}
                 </td>
-                <td className="px-6 py-4 text-right space-x-2">
-                  {u.role === 'SUPER_ADMIN' || u.role === 'STORE_MANAGER' ? (
-                    <span className="text-xs text-slate-400 italic font-semibold">Terkunci (Proteksi)</span>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => handleOpenEdit(u)}
-                        className="inline-flex items-center space-x-1 text-xs font-bold text-brand-600 hover:text-brand-700 bg-brand-50 dark:bg-brand-950/40 px-2.5 py-1 rounded-lg"
-                      >
-                        <Edit className="h-3.5 w-3.5" />
-                        <span>Edit Role</span>
+                <td className="px-3 py-3">
+                  {u.is_active ? <StatusBadge status="APPROVED" label="Aktif" /> : <StatusBadge status="CANCELLED" label="Nonaktif" />}
+                </td>
+                <td className="px-3 py-3 text-xs text-slate-500">{formatDate(u.last_login_at)}</td>
+                <td className="px-3 py-3">
+                  {canManage(u) && (
+                    <div className="flex justify-end gap-1">
+                      {u.role === 'B2B_CUSTOMER' && u.b2b_profile && (
+                        <button title="Verifikasi mitra toko" onClick={() => open('b2b', u)} className="rounded-lg p-2 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40">
+                          <BadgeCheck className="h-4 w-4" />
+                        </button>
+                      )}
+                      <button title="Ubah" onClick={() => open('edit', u)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+                        <Pencil className="h-4 w-4" />
                       </button>
-                      <button
-                        onClick={() => handleDeleteUser(u.id, u.name)}
-                        className="inline-flex items-center space-x-1 rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400 px-2.5 py-1 text-xs font-bold hover:bg-rose-200"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        <span>Hapus</span>
+                      <button title="Reset kata sandi" onClick={() => open('password', u)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+                        <KeyRound className="h-4 w-4" />
                       </button>
-                    </>
+                      {u.id !== me?.id && (
+                        <button title="Hapus" onClick={() => open('delete', u)} className="rounded-lg p-2 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </td>
               </tr>
             ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Modal Edit Role */}
-      {isModalOpen && selectedUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
-              <div className="flex items-center space-x-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-100 text-brand-600">
-                  <Edit className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">Ubah Role Pengguna</h3>
-                  <p className="text-xs text-slate-500">{selectedUser.name}</p>
-                </div>
-              </div>
-              <button onClick={() => setIsModalOpen(false)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveRole} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Pilih Role Akses Baru *</label>
-                <select
-                  value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as any)}
-                  className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white font-bold"
-                >
-                  <option value="B2B_CUSTOMER">B2B MITRA WARUNG (Kasbon Tempo 30 Hari & Harga Grosir)</option>
-                  <option value="B2C_CUSTOMER">B2C CUSTOMER ECERAN (Pembayaran Langsung)</option>
-                </select>
-              </div>
-
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-200 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="rounded-xl px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-brand-700 shadow-lg shadow-brand-600/20"
-                >
-                  Simpan Perubahan Role
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+          </Table>
+          <Pagination meta={list.meta} onPage={list.setPage} />
+        </Card>
       )}
 
-      {/* Modal Tambah Pelanggan Baru */}
-      {isAddOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
-              <div className="flex items-center space-x-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-100 text-brand-600">
-                  <UserPlus className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">Tambah Pelanggan Baru</h3>
-                  <p className="text-xs text-slate-500">Daftarkan pelanggan B2B Mitra Warung atau B2C Eceran.</p>
-                </div>
-              </div>
-              <button onClick={() => setIsAddOpen(false)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleAddCustomer} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Nama Lengkap / Nama Toko *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: Toko Kelontong Rejeki"
-                  value={addName}
-                  onChange={(e) => setAddName(e.target.value)}
-                  className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Nomor Handphone / WhatsApp *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="0812-xxxx-xxxx"
-                  value={addPhone}
-                  onChange={(e) => setAddPhone(e.target.value)}
-                  className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Email (Opsional)</label>
-                <input
-                  type="email"
-                  placeholder="pelanggan@gmail.com"
-                  value={addEmail}
-                  onChange={(e) => setAddEmail(e.target.value)}
-                  className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">Role Akses Pelanggan *</label>
-                <select
-                  value={addRole}
-                  onChange={(e) => setAddRole(e.target.value as any)}
-                  className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-sm text-slate-900 dark:text-white font-bold"
-                >
-                  <option value="B2B_CUSTOMER">B2B MITRA WARUNG (Harga Grosir & Kasbon Tempo 30 Hari)</option>
-                  <option value="B2C_CUSTOMER">B2C CUSTOMER ECERAN (Pembayaran Tunai / Transfer / QRIS)</option>
-                </select>
-              </div>
-
-              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-200 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsAddOpen(false)}
-                  className="rounded-xl px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-brand-700 shadow-lg shadow-brand-600/20"
-                >
-                  Daftarkan Pelanggan
-                </button>
-              </div>
-            </form>
-          </div>
+      <Modal
+        open={mode === 'create' || mode === 'edit'}
+        onClose={close}
+        title={mode === 'create' ? 'Tambah akun' : `Ubah ${target?.full_name}`}
+        footer={
+          <>
+            <button className={btnSecondary} onClick={close}>Batal</button>
+            <button className={btnPrimary} disabled={busy} onClick={submit}>Simpan</button>
+          </>
+        }
+      >
+        <div className="grid gap-3">
+          <Field label="Nama lengkap">
+            <input className={inputClass} value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
+          </Field>
+          {mode === 'create' && (
+            <Field label="Nomor HP (untuk login)" hint="Format: 08xxxxxxxxxx">
+              <input className={inputClass} value={form.phone_number} onChange={(e) => setForm({ ...form, phone_number: e.target.value })} />
+            </Field>
+          )}
+          <Field label="Email (opsional)">
+            <input type="email" className={inputClass} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          </Field>
+          <Field label="Peran">
+            <select className={inputClass} value={form.role} disabled={target?.id === me?.id} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
+              {assignableRoles.map((r) => (
+                <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+              ))}
+            </select>
+          </Field>
+          {mode === 'create' && (
+            <Field label="Kata sandi awal" hint={PASSWORD_HINT}>
+              <input type="text" className={inputClass} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+            </Field>
+          )}
+          {mode === 'edit' && target?.id !== me?.id && (
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
+              Akun aktif (bisa login)
+            </label>
+          )}
         </div>
-      )}
+      </Modal>
+
+      <Modal
+        open={mode === 'password'}
+        onClose={close}
+        size="sm"
+        title="Reset kata sandi"
+        subtitle={`Untuk ${target?.full_name} (${target?.phone_number}). Pastikan identitasnya sudah diverifikasi.`}
+        footer={
+          <>
+            <button className={btnSecondary} onClick={close}>Batal</button>
+            <button className={btnPrimary} disabled={busy} onClick={submit}>Reset</button>
+          </>
+        }
+      >
+        <Field label="Kata sandi baru" hint={PASSWORD_HINT}>
+          <input type="text" className={inputClass} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+        </Field>
+      </Modal>
+
+      <Modal
+        open={mode === 'b2b'}
+        onClose={close}
+        size="sm"
+        title="Verifikasi mitra toko"
+        subtitle={target?.b2b_profile ? `${target.b2b_profile.store_name} — ${target.b2b_profile.store_address}` : undefined}
+        footer={
+          <>
+            <button className={btnSecondary} onClick={close}>Batal</button>
+            <button className={btnPrimary} disabled={busy} onClick={submit}>Simpan</button>
+          </>
+        }
+      >
+        <div className="grid gap-3">
+          <Field label="Keputusan">
+            <select className={inputClass} value={b2b.status} onChange={(e) => setB2b({ ...b2b, status: e.target.value as typeof b2b.status })}>
+              <option value="APPROVED">Setujui — dapat harga grosir</option>
+              <option value="REJECTED">Tolak</option>
+              <option value="PENDING">Tunda</option>
+            </select>
+          </Field>
+          {b2b.status === 'APPROVED' && (
+            <Field label="Limit kasbon (Rp)" hint={`Isi 0 jika tidak diberi kasbon. Saat ini: ${formatCurrency(target?.b2b_profile?.approved_credit_limit || 0)}`}>
+              <input type="number" min={0} className={inputClass} value={b2b.credit_limit} onChange={(e) => setB2b({ ...b2b, credit_limit: e.target.value })} />
+            </Field>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        open={mode === 'delete'}
+        onClose={close}
+        size="sm"
+        title={`Hapus ${target?.full_name}?`}
+        subtitle="Sebaiknya nonaktifkan akun saja agar riwayat pesanan tetap rapi. Hapus hanya untuk akun yang salah dibuat."
+        footer={
+          <>
+            <button className={btnSecondary} onClick={close}>Batal</button>
+            <button className={btnDanger} disabled={busy} onClick={submit}>Hapus</button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-400">Tindakan ini tidak bisa dibatalkan dari dashboard.</p>
+      </Modal>
     </div>
   );
 };

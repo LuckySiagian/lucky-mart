@@ -120,3 +120,14 @@ func getUserRoleInfo(c *gin.Context) (uuid.UUID, string) {
 	u, roleStr := getUserContextInfo(c)
 	return u, roleStr
 }
+
+func (h *NotificationHandler) GetUnreadCount(c *gin.Context) {
+	userID, _ := getUserContext(c)
+	count, err := h.notifService.CountUnread(c.Request.Context(), userID)
+	if err != nil {
+		helpers.SendInternalServerError(c, err.Error())
+		return
+	}
+
+	helpers.ResponseSuccess(c, http.StatusOK, "Unread notification count retrieved", gin.H{"unread": count})
+}

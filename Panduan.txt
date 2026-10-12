@@ -24,6 +24,12 @@ Buka **3 Tab Terminal** di VS Code untuk masing-masing bagian:
    go run cmd/api/main.go
    ```
    *(Atau bisa menggunakan perintah singkat: `make run`)*
+3. **(Sekali saja, opsional) Isi data demo** — produk, pelanggan, pesanan, kasbon:
+   ```powershell
+   go run ./cmd/seed-demo
+   ```
+   Daftar akun demo & yang bisa dicoba ada di `docs/AKUN-DEMO.md`.
+   Jangan dijalankan di server production.
 
 ---
 
@@ -60,5 +66,5 @@ Buka **3 Tab Terminal** di VS Code untuk masing-masing bagian:
 | **Database PostgreSQL** | `docker-compose up -d postgres` | Port `5433` (pgAdmin: Server `sembako`) |
 | **Backend API (Go)** | `go run cmd/api/main.go` | `http://localhost:8080` |
 | **Swagger API Docs** | *(Otomatis aktif)* | `http://localhost:8080/swagger/index.html` |
-| **Customer Web** | `npm run dev` (di `customer-web`) | `http://localhost:5173` |
-| **Admin Dashboard** | `npm run dev` (di `admin-dashboard`) | `http://localhost:5174` |
+| **Customer Web** | `npm run dev` (di `customer-web`) | `http://localhost:3001` |
+| **Admin Dashboard** | `npm run dev` (di `admin-dashboard`) | `http://localhost:3002` |

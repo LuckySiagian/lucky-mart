@@ -15,10 +15,10 @@ import (
 )
 
 var (
-	ErrCartItemNotFound   = errors.New("cart item not found")
-	ErrInsufficientStock  = errors.New("requested quantity exceeds available stock")
-	ErrInactiveProduct    = errors.New("cannot add inactive or deleted product to cart")
-	ErrUnauthorizedCart   = errors.New("you do not have permission to modify this cart item")
+	ErrCartItemNotFound  = errors.New("cart item not found")
+	ErrInsufficientStock = errors.New("requested quantity exceeds available stock")
+	ErrInactiveProduct   = errors.New("cannot add inactive or deleted product to cart")
+	ErrUnauthorizedCart  = errors.New("you do not have permission to modify this cart item")
 )
 
 type CartService interface {
@@ -27,7 +27,7 @@ type CartService interface {
 	UpdateCartItem(ctx context.Context, userID uuid.UUID, userRole constants.UserRole, itemID uuid.UUID, req dto.UpdateCartItemDTO) (*dto.CartResponseDTO, error)
 	RemoveCartItem(ctx context.Context, userID uuid.UUID, userRole constants.UserRole, itemID uuid.UUID) (*dto.CartResponseDTO, error)
 	ClearCart(ctx context.Context, userID uuid.UUID) error
-	GetCheckoutSummary(ctx context.Context, userID uuid.UUID, userRole constants.UserRole) (*dto.CheckoutSummaryDTO, error)
+	GetCheckoutSummary(ctx context.Context, userID uuid.UUID, userRole constants.UserRole, req dto.CheckoutSummaryRequestDTO) (*dto.CheckoutSummaryDTO, error)
 }
 
 type cartService struct {
@@ -35,6 +35,8 @@ type cartService struct {
 	cartRepo     repositories.CartRepository
 	cartItemRepo repositories.CartItemRepository
 	productRepo  repositories.ProductRepository
+	methodRepo   repositories.ShippingMethodRepository
+	rateRepo     repositories.ShippingRateRepository
 }
 
 func NewCartService(
@@ -42,12 +44,16 @@ func NewCartService(
 	cartRepo repositories.CartRepository,
 	cartItemRepo repositories.CartItemRepository,
 	productRepo repositories.ProductRepository,
+	methodRepo repositories.ShippingMethodRepository,
+	rateRepo repositories.ShippingRateRepository,
 ) CartService {
 	return &cartService{
 		db:           db,
 		cartRepo:     cartRepo,
 		cartItemRepo: cartItemRepo,
 		productRepo:  productRepo,
+		methodRepo:   methodRepo,
+		rateRepo:     rateRepo,
 	}
 }
 
@@ -220,42 +226,74 @@ func (s *cartService) ClearCart(ctx context.Context, userID uuid.UUID) error {
 	return s.cartRepo.Clear(ctx, cart.ID)
 }
 
-func (s *cartService) GetCheckoutSummary(ctx context.Context, userID uuid.UUID, userRole constants.UserRole) (*dto.CheckoutSummaryDTO, error) {
+func (s *cartService) GetCheckoutSummary(ctx context.Context, userID uuid.UUID, userRole constants.UserRole, req dto.CheckoutSummaryRequestDTO) (*dto.CheckoutSummaryDTO, error) {
 	cartRes, err := s.GetCart(ctx, userID, userRole)
 	if err != nil {
 		return nil, err
 	}
 
-	var validationErrors []string
-	canProceed := true
-
-	if len(cartRes.Items) == 0 {
-		canProceed = false
-		validationErrors = append(validationErrors, "Your shopping cart is empty")
+	items := cartRes.Items
+	if len(req.CartItemIDs) > 0 {
+		wanted := make(map[uuid.UUID]bool, len(req.CartItemIDs))
+		for _, id := range req.CartItemIDs {
+			wanted[id] = true
+		}
+		filtered := make([]dto.CartItemResponseDTO, 0, len(items))
+		for _, it := range items {
+			if wanted[it.ID] {
+				filtered = append(filtered, it)
+			}
+		}
+		items = filtered
 	}
 
-	for _, item := range cartRes.Items {
+	var validationErrors []string
+	canProceed := true
+	if len(items) == 0 {
+		canProceed = false
+		validationErrors = append(validationErrors, "Belum ada barang yang dipilih untuk checkout")
+	}
+
+	var subtotal float64
+	var totalItems int
+	for _, item := range items {
 		if !item.IsProductActive {
 			canProceed = false
-			validationErrors = append(validationErrors, fmt.Sprintf("Product '%s' is no longer available", item.ProductName))
+			validationErrors = append(validationErrors, fmt.Sprintf("Produk '%s' sudah tidak tersedia", item.ProductName))
+			continue
 		}
 		if !item.IsStockSufficient {
 			canProceed = false
-			validationErrors = append(validationErrors, fmt.Sprintf("Item '%s' exceeds available stock (In cart: %d, Available: %d)", item.ProductName, item.Quantity, item.AvailableStock))
+			validationErrors = append(validationErrors, fmt.Sprintf("Stok '%s' tidak cukup (di keranjang: %d, tersedia: %d)", item.ProductName, item.Quantity, item.AvailableStock))
 		}
+		subtotal += item.Subtotal
+		totalItems += item.Quantity
 	}
 
-	estimatedShipping := 15000.00 // Default flat rate shipping for MVP
-	grandTotal := cartRes.TotalAmount + estimatedShipping
+	shippingFee := 0.0
+	var methodID *uuid.UUID
+	if req.DeliveryType != constants.DeliveryTypePickup {
+		if method, fee, err := quoteShippingFee(ctx, s.methodRepo, s.rateRepo, req.ShippingMethodID, req.City); err == nil {
+			shippingFee = fee
+			methodID = &method.ID
+		} else {
+			canProceed = false
+			validationErrors = append(validationErrors, err.Error())
+		}
+	}
+	freeMin := freeShippingMin(s.db.WithContext(ctx))
+	shippingFee = applyFreeShipping(shippingFee, subtotal, freeMin)
 
 	return &dto.CheckoutSummaryDTO{
 		CartID:               cartRes.ID,
 		UserID:               userID,
-		TotalItems:           cartRes.TotalItems,
-		SubtotalAmount:       cartRes.TotalAmount,
-		EstimatedShippingFee: estimatedShipping,
-		GrandTotalAmount:     grandTotal,
-		Items:                cartRes.Items,
+		TotalItems:           totalItems,
+		SubtotalAmount:       subtotal,
+		ShippingMethodID:     methodID,
+		EstimatedShippingFee: shippingFee,
+		FreeShippingMin:      freeMin,
+		GrandTotalAmount:     subtotal + shippingFee,
+		Items:                items,
 		CanProceedToOrder:    canProceed,
 		ValidationErrors:     validationErrors,
 	}, nil
@@ -294,19 +332,20 @@ func (s *cartService) buildCartResponse(ctx context.Context, cart *models.Cart, 
 		isStockSufficient := item.Quantity <= availableStock
 
 		itemDTOs = append(itemDTOs, dto.CartItemResponseDTO{
-			ID:                 item.ID,
-			ProductID:          item.ProductID,
-			ProductName:        getItemProductName(product),
-			SKU:                getItemProductSKU(product),
-			ProductUnitID:      item.ProductUnitID,
-			UnitName:           getItemUnitName(targetUnit),
-			Quantity:           item.Quantity,
-			UnitPrice:          unitPrice,
-			Subtotal:           subtotal,
-			Notes:              item.Notes,
-			AvailableStock:     availableStock,
-			IsStockSufficient:  isStockSufficient,
-			IsProductActive:    isActive,
+			ID:                item.ID,
+			ProductID:         item.ProductID,
+			ProductName:       getItemProductName(product),
+			ImageURL:          getItemImage(product),
+			SKU:               getItemProductSKU(product),
+			ProductUnitID:     item.ProductUnitID,
+			UnitName:          getItemUnitName(targetUnit),
+			Quantity:          item.Quantity,
+			UnitPrice:         unitPrice,
+			Subtotal:          subtotal,
+			Notes:             item.Notes,
+			AvailableStock:    availableStock,
+			IsStockSufficient: isStockSufficient,
+			IsProductActive:   isActive,
 		})
 
 		if isActive && isStockSufficient {
@@ -351,4 +390,19 @@ func getItemUnitName(u *models.ProductUnit) string {
 		return u.UnitName
 	}
 	return "Unit"
+}
+
+func getItemImage(p *models.Product) string {
+	if p == nil {
+		return ""
+	}
+	for _, img := range p.Images {
+		if img.IsPrimary {
+			return img.ImageURL
+		}
+	}
+	if len(p.Images) > 0 {
+		return p.Images[0].ImageURL
+	}
+	return ""
 }

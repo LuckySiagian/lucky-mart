@@ -6,7 +6,6 @@ import (
 	"backend-sembako/helpers"
 	"backend-sembako/internal/dto"
 	"backend-sembako/internal/services"
-	"backend-sembako/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -38,11 +37,27 @@ func (h *ShippingHandler) CalculateShippingRate(c *gin.Context) {
 
 	res, err := h.shippingService.CalculateShippingRate(c.Request.Context(), req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
 	helpers.ResponseSuccess(c, http.StatusOK, "Shipping rate calculated successfully", res)
+}
+
+func (h *ShippingHandler) GetShipments(c *gin.Context) {
+	var req dto.PaginationRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	res, err := h.shippingService.GetShipments(c.Request.Context(), req, c.Query("status"))
+	if err != nil {
+		helpers.SendInternalServerError(c, err.Error())
+		return
+	}
+
+	helpers.ResponseSuccess(c, http.StatusOK, "Shipments retrieved successfully", res)
 }
 
 func (h *ShippingHandler) CreateShipment(c *gin.Context) {
@@ -54,7 +69,7 @@ func (h *ShippingHandler) CreateShipment(c *gin.Context) {
 
 	res, err := h.shippingService.CreateShipment(c.Request.Context(), req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 
@@ -62,27 +77,24 @@ func (h *ShippingHandler) CreateShipment(c *gin.Context) {
 }
 
 func (h *ShippingHandler) GetShipmentByOrderID(c *gin.Context) {
-	orderIDStr := c.Param("order_id")
-	orderID, err := utils.ParseUUID(orderIDStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid order UUID format", nil)
+	userID, role := getUserContext(c)
+	orderID, ok := parseIDParam(c, "order_id")
+	if !ok {
 		return
 	}
 
-	res, err := h.shippingService.GetShipmentByOrderID(c.Request.Context(), orderID)
+	res, err := h.shippingService.GetShipmentByOrderID(c.Request.Context(), userID, role, orderID)
 	if err != nil {
-		helpers.SendNotFound(c, err.Error())
+		sendServiceError(c, err)
 		return
 	}
 
-	helpers.ResponseSuccess(c, http.StatusOK, "Shipment details retrieved successfully", res)
+	helpers.ResponseSuccess(c, http.StatusOK, "Shipment tracking details retrieved successfully", res)
 }
 
 func (h *ShippingHandler) UpdateShipmentStatus(c *gin.Context) {
-	shipmentIDStr := c.Param("id")
-	shipmentID, err := utils.ParseUUID(shipmentIDStr)
-	if err != nil {
-		helpers.SendBadRequest(c, "Invalid shipment UUID format", nil)
+	shipmentID, ok := parseIDParam(c, "id")
+	if !ok {
 		return
 	}
 
@@ -94,7 +106,7 @@ func (h *ShippingHandler) UpdateShipmentStatus(c *gin.Context) {
 
 	res, err := h.shippingService.UpdateShipmentStatus(c.Request.Context(), shipmentID, req)
 	if err != nil {
-		helpers.SendBadRequest(c, err.Error(), nil)
+		sendServiceError(c, err)
 		return
 	}
 

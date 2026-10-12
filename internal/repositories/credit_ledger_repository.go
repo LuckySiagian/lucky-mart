@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type creditLedgerRepository struct {
@@ -23,7 +24,7 @@ func NewCreditLedgerRepository(db *gorm.DB) CreditLedgerRepository {
 func (r *creditLedgerRepository) FindByUserID(ctx context.Context, userID uuid.UUID) (*models.CreditLedger, error) {
 	var ledger models.CreditLedger
 	err := r.db.WithContext(ctx).
-		Preload("User").
+		Preload("User.B2BProfile").
 		Where("user_id = ?", userID).
 		First(&ledger).Error
 
@@ -39,7 +40,7 @@ func (r *creditLedgerRepository) FindByUserID(ctx context.Context, userID uuid.U
 func (r *creditLedgerRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.CreditLedger, error) {
 	var ledger models.CreditLedger
 	err := r.db.WithContext(ctx).
-		Preload("User").
+		Preload("User.B2BProfile").
 		Where("id = ?", id).
 		First(&ledger).Error
 
@@ -56,7 +57,7 @@ func (r *creditLedgerRepository) FindAll(ctx context.Context, req dto.Pagination
 	var ledgers []models.CreditLedger
 	var total int64
 
-	db := r.db.WithContext(ctx).Model(&models.CreditLedger{}).Preload("User")
+	db := r.db.WithContext(ctx).Model(&models.CreditLedger{}).Preload("User.B2BProfile")
 
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -83,7 +84,7 @@ func (r *creditLedgerRepository) Update(ctx context.Context, tx *gorm.DB, ledger
 	if tx != nil {
 		db = tx
 	}
-	return db.WithContext(ctx).Save(ledger).Error
+	return db.WithContext(ctx).Omit(clause.Associations).Save(ledger).Error
 }
 
 type creditPaymentRepository struct {

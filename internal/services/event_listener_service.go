@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -46,91 +47,102 @@ func NewEventListenerService(
 	}
 }
 
-func (s *eventListenerService) RegisterSubscribers(bus eventbus.EventBus) {
-	events := []string{
-		"USER_REGISTERED", "USER_LOGIN",
-		"PRODUCT_CREATED", "LOW_STOCK",
-		"ORDER_CREATED", "ORDER_CANCELLED", "ORDER_COMPLETED",
-		"PAYMENT_PENDING", "PAYMENT_PAID", "PAYMENT_REFUNDED",
-		"SHIPMENT_CREATED", "SHIPMENT_PICKED_UP", "SHIPMENT_DELIVERED",
-		"PASSWORD_RESET", "EMAIL_VERIFICATION",
-	}
+// Events that are recorded in the audit log and may create notifications.
+var domainEvents = []string{
+	"USER_REGISTERED", "B2B_REGISTERED", "B2B_VERIFIED", "PASSWORD_RESET_REQUESTED",
+	"ORDER_CREATED", "ORDER_CANCELLED", "ORDER_STATUS_CHANGED", "ORDER_COMPLETED",
+	"PAYMENT_PROOF_UPLOADED", "PAYMENT_PAID", "PAYMENT_REJECTED",
+	"SHIPMENT_OUT_FOR_DELIVERY", "CREDIT_SETTLED",
+}
 
-	for _, evt := range events {
+func (s *eventListenerService) RegisterSubscribers(bus eventbus.EventBus) {
+	for _, evt := range domainEvents {
 		bus.Subscribe(evt, s.handleDomainEvent)
 	}
 }
 
+// handleDomainEvent writes the event to the audit log, then creates in-app
+// notifications: one for payload["user_id"] (the customer) and, when
+// payload["notify_staff"] is true, one for every active admin/manager.
+// The title and message come from a notification template for the event
+// when one exists, otherwise from payload["title"] / payload["message"].
 func (s *eventListenerService) handleDomainEvent(ctx context.Context, evt eventbus.DomainEvent) error {
 	logger.Log.Info().
 		Str("event_name", evt.Name).
 		Str("aggregate", evt.Aggregate).
 		Str("aggregate_id", evt.AggregateID.String()).
-		Msg("Processing Domain Event Subscriber")
+		Msg("Processing domain event")
 
-	// 1. Audit Log into EventLog Table
-	eventLog := &models.EventLog{
+	_ = s.eventRepo.Create(ctx, nil, &models.EventLog{
 		EventName:   evt.Name,
 		Aggregate:   evt.Aggregate,
 		AggregateID: evt.AggregateID,
 		Payload:     evt.ToJSON(),
 		Status:      "PROCESSED",
-	}
-	_ = s.eventRepo.Create(ctx, nil, eventLog)
+	})
 
-	// Extract Target User ID from payload
-	userIDVal, exists := evt.Payload["user_id"]
-	if !exists {
-		return nil
-	}
-	userIDStr, ok := userIDVal.(string)
-	if !ok {
-		return nil
-	}
-	targetUserID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		return nil
-	}
-
-	channels := []string{"IN_APP", "EMAIL"}
-	now := time.Now()
-
-	for _, ch := range channels {
-		// Find Notification Template for event + channel
-		tmpl, err := s.tmplRepo.FindByEventTypeAndChannel(ctx, evt.Name, ch)
-		title := fmt.Sprintf("Notifikasi %s", evt.Name)
-		body := fmt.Sprintf("Event %s telah diproses untuk ID %s", evt.Name, evt.AggregateID)
-
-		if err == nil && tmpl != nil {
-			title = tmpl.Subject
-			body = renderTemplateBody(tmpl.Body, evt.Payload)
-		}
-
-		notif := &models.Notification{
-			UserID:  targetUserID,
-			Title:   title,
-			Message: body,
-			Type:    evt.Name,
-			Channel: ch,
-			Status:  "SENT",
-			IsRead:  false,
-		}
-
-		_ = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := s.notificationRepo.Create(ctx, tx, notif); err != nil {
-				return err
+	if userIDStr, ok := evt.Payload["user_id"].(string); ok {
+		if userID, err := uuid.Parse(userIDStr); err == nil {
+			title, body := payloadString(evt.Payload, "title"), payloadString(evt.Payload, "message")
+			if tmpl, err := s.tmplRepo.FindByEventTypeAndChannel(ctx, evt.Name, "IN_APP"); err == nil && tmpl != nil && tmpl.IsActive {
+				title = renderTemplateBody(tmpl.Subject, evt.Payload)
+				body = renderTemplateBody(tmpl.Body, evt.Payload)
 			}
-			return s.notifLogRepo.Create(ctx, tx, &models.NotificationLog{
-				NotificationID: notif.ID,
-				Channel:        ch,
-				Status:         "SENT",
-				RetryCount:     0,
-				SentAt:         &now,
-			})
-		})
+			if title != "" {
+				s.notify(ctx, userID, evt.Name, title, body)
+			}
+		}
+	}
+
+	if notifyStaff, _ := evt.Payload["notify_staff"].(bool); notifyStaff {
+		title := payloadString(evt.Payload, "staff_title")
+		body := payloadString(evt.Payload, "staff_message")
+		if title != "" {
+			var staff []models.User
+			if err := s.db.WithContext(ctx).
+				Where("role IN ? AND is_active = true", []string{"SUPER_ADMIN", "STORE_MANAGER"}).
+				Find(&staff).Error; err == nil {
+				for _, u := range staff {
+					s.notify(ctx, u.ID, evt.Name, title, body)
+				}
+			}
+		}
 	}
 
 	return nil
+}
+
+func (s *eventListenerService) notify(ctx context.Context, userID uuid.UUID, eventName, title, body string) {
+	now := time.Now()
+	notif := &models.Notification{
+		UserID:  userID,
+		Title:   title,
+		Message: body,
+		Type:    eventName,
+		Channel: "IN_APP",
+		Status:  "SENT",
+	}
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.notificationRepo.Create(ctx, tx, notif); err != nil {
+			return err
+		}
+		return s.notifLogRepo.Create(ctx, tx, &models.NotificationLog{
+			NotificationID: notif.ID,
+			Channel:        "IN_APP",
+			Status:         "SENT",
+			SentAt:         &now,
+		})
+	})
+	if err != nil {
+		logger.Log.Error().Err(err).Str("event_name", eventName).Msg("Failed to create notification")
+	}
+}
+
+func payloadString(payload map[string]interface{}, key string) string {
+	if v, ok := payload[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 func (s *eventListenerService) GetEvents(ctx context.Context, req dto.PaginationRequest) (dto.PaginatedResponse, error) {
@@ -179,5 +191,8 @@ func renderTemplateBody(body string, payload map[string]interface{}) string {
 		valStr := fmt.Sprintf("%v", v)
 		res = strings.ReplaceAll(res, placeholder, valStr)
 	}
-	return res
+	// Never show customers a raw {{placeholder}} that had no value.
+	return unknownPlaceholder.ReplaceAllString(res, "")
 }
+
+var unknownPlaceholder = regexp.MustCompile(`\{\{[a-zA-Z0-9_]+\}\}`)

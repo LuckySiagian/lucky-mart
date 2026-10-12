@@ -1,100 +1,100 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowRight, Lock, Phone } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuthStore } from '../../store/useAuthStore';
 import { authService } from '../../services/apiServices';
-import { Store, Lock, Phone, ArrowRight } from 'lucide-react';
-import { toast } from 'sonner';
+import { getErrorMessage, isPhone } from '../../lib/utils';
+import { AuthShell, authInput } from './AuthShell';
+
+const STAFF = ['SUPER_ADMIN', 'STORE_MANAGER', 'WAREHOUSE_STAFF', 'DRIVER'];
+
+// Only follow same-site paths after login, never a full URL from the query.
+const safeNext = (next: string | null) => (next && next.startsWith('/') && !next.startsWith('//') ? next : '/');
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
-  const setAuth = useAuthStore((state) => state.setAuth);
+  const [params] = useSearchParams();
+  const next = safeNext(params.get('next'));
+  const { isAuthenticated, setAuth } = useAuthStore();
 
-  const [phoneNumber, setPhoneNumber] = useState('081234567890');
-  const [password, setPassword] = useState('SuperAdmin123!');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [forgot, setForgot] = useState(false);
+
+  if (isAuthenticated) return <Navigate to={next} replace />;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isPhone(phoneNumber)) return toast.error('Nomor HP tidak valid (contoh: 081234567890).');
     setLoading(true);
-
     try {
-      const res = await authService.login({
-        phone_number: phoneNumber,
-        password,
-      });
-
-      const { user, access_token, refresh_token } = res.data;
-      setAuth(user, access_token, refresh_token);
-      toast.success(`Selamat datang kembali, ${user.full_name}!`);
-      navigate('/products');
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Gagal masuk. Periksa nomor telepon & password Anda.');
+      if (forgot) {
+        const message = await authService.forgotPassword(phoneNumber.trim());
+        toast.success(message, { duration: 8000 });
+        setForgot(false);
+        return;
+      }
+      const res = await authService.login({ phone_number: phoneNumber.trim(), password });
+      if (STAFF.includes(res.user.role)) {
+        toast.error('Ini akun staf toko. Silakan masuk lewat dashboard admin.');
+        return;
+      }
+      setAuth(res.user, res.access_token, res.refresh_token);
+      toast.success(`Selamat datang, ${res.user.full_name}!`);
+      navigate(next, { replace: true });
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Gagal masuk. Periksa nomor HP dan kata sandi.'));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4 font-sans">
-      <div className="w-full max-w-md space-y-8 rounded-3xl bg-slate-900 p-8 shadow-2xl border border-slate-800">
-        <div className="text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-600 text-white shadow-xl shadow-primary-600/30">
-            <Store className="h-8 w-8" />
+    <AuthShell title={forgot ? 'Lupa kata sandi' : 'Masuk'} subtitle={forgot ? 'Masukkan nomor HP akun Anda' : 'Belanja kebutuhan dapur dengan mudah'}>
+      <form className="space-y-4" onSubmit={handleSubmit}>
+        <label className="block">
+          <span className="mb-1 block text-xs font-semibold uppercase text-slate-400">Nomor HP</span>
+          <div className="relative">
+            <Phone className="absolute left-3.5 top-3 h-5 w-5 text-slate-500" />
+            <input type="tel" required autoComplete="username" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="08xxxxxxxxxx" className={authInput} />
           </div>
-          <h2 className="mt-4 text-2xl font-extrabold text-white">LuckyMart</h2>
-          <p className="mt-1 text-sm text-slate-400">Masuk Akun Pelanggan & B2B Mitra Warung</p>
-        </div>
+        </label>
 
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">Nomor Telepon</label>
-              <div className="relative">
-                <Phone className="absolute left-3.5 top-3 h-5 w-5 text-slate-500" />
-                <input
-                  type="text"
-                  required
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  placeholder="081234567890"
-                  className="w-full rounded-xl bg-slate-800/80 border border-slate-700 pl-11 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:border-primary-500 focus:outline-none"
-                />
-              </div>
+        {!forgot && (
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold uppercase text-slate-400">Kata sandi</span>
+            <div className="relative">
+              <Lock className="absolute left-3.5 top-3 h-5 w-5 text-slate-500" />
+              <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className={authInput} />
             </div>
+          </label>
+        )}
 
-            <div>
-              <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">Kata Sandi</label>
-              <div className="relative">
-                <Lock className="absolute left-3.5 top-3 h-5 w-5 text-slate-500" />
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full rounded-xl bg-slate-800/80 border border-slate-700 pl-11 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:border-primary-500 focus:outline-none"
-                />
-              </div>
-            </div>
-          </div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary-600 py-3 text-sm font-bold text-white shadow-lg shadow-primary-600/30 hover:bg-primary-500 disabled:opacity-50"
+        >
+          {loading ? 'Memproses...' : forgot ? 'Kirim Permintaan' : 'Masuk'}
+          <ArrowRight className="h-4 w-4" />
+        </button>
+      </form>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex w-full justify-center items-center space-x-2 rounded-xl bg-primary-600 py-3 text-sm font-bold text-white hover:bg-primary-500 transition-all shadow-lg shadow-primary-600/30 disabled:opacity-50"
-          >
-            <span>{loading ? 'Memproses...' : 'Masuk Sekarang'}</span>
-            <ArrowRight className="h-4 w-4" />
-          </button>
-        </form>
-
-        <div className="text-center text-xs text-slate-400">
-          Belum punya akun?{' '}
-          <Link to="/register" className="text-primary-400 font-bold hover:underline">
-            Daftar Akun Baru
-          </Link>
-        </div>
+      <div className="space-y-2 text-center text-sm text-slate-400">
+        <button onClick={() => setForgot(!forgot)} className="font-semibold text-primary-400 hover:underline">
+          {forgot ? 'Kembali ke halaman masuk' : 'Lupa kata sandi?'}
+        </button>
+        {!forgot && (
+          <p>
+            Belum punya akun?{' '}
+            <Link to={`/register${next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}`} className="font-bold text-primary-400 hover:underline">
+              Daftar
+            </Link>
+          </p>
+        )}
       </div>
-    </div>
+    </AuthShell>
   );
 };

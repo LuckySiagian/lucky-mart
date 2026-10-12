@@ -219,3 +219,10 @@ func (r *eventLogRepository) FindAll(ctx context.Context, req dto.PaginationRequ
 
 	return events, total, nil
 }
+
+func (r *notificationRepository) CountUnread(ctx context.Context, userID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&models.Notification{}).
+		Where("user_id = ? AND is_read = false", userID).Count(&count).Error
+	return count, err
+}

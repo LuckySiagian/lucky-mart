@@ -1,192 +1,104 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Heart, ShoppingBag, Star, Package, Zap } from 'lucide-react';
+import { Heart, Package, ShoppingBag, Zap } from 'lucide-react';
 import { formatCurrency } from '../../lib/utils';
-import { useCartStore } from '../../store/useCartStore';
 import { useWishlistStore } from '../../store/useWishlistStore';
-import { cartService } from '../../services/apiServices';
-import { toast } from 'sonner';
+import { useAuthStore } from '../../store/useAuthStore';
+import { useAddToCart } from '../../hooks/useAddToCart';
+import type { Product } from '../../types';
 
-interface ProductCardProps {
-  product: {
-    id: string;
-    name: string;
-    sku: string;
-    description?: string;
-    is_active: boolean;
-    images?: Array<{ id?: string; image_url: string }>;
-    units?: Array<any>;
-    product_units?: Array<any>;
-  };
-}
-
-export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
-  const navigate = useNavigate();
-  const { addItem, setSelectedForCheckout } = useCartStore();
+export const ProductCard: React.FC<{ product: Product }> = ({ product }) => {
   const { wishlistIds, toggleWishlist } = useWishlistStore();
+  const isB2B = useAuthStore((s) => s.user?.role === 'B2B_CUSTOMER' && s.user?.b2b_profile?.verification_status === 'APPROVED');
+  const { add, adding } = useAddToCart();
+  const [unitIndex, setUnitIndex] = useState(0);
 
+  const unit = product.units[unitIndex] || product.units[0];
   const isLiked = wishlistIds.includes(product.id);
-  
-  const availableUnits = (product.units && product.units.length > 0)
-    ? product.units
-    : (product.product_units && product.product_units.length > 0)
-    ? product.product_units
-    : [{
-        id: `unit-${product.id}`,
-        unit_name: 'Pcs',
-        retail_price: 5000,
-        wholesale_price: 4500,
-        min_wholesale_qty: 5,
-        stock_quantity: 100,
-      }];
-
-  const [selectedUnitIndex, setSelectedUnitIndex] = useState(0);
-  const activeUnit = availableUnits[selectedUnitIndex] || availableUnits[0];
-
-  const imageUrl = product.images && product.images.length > 0 ? product.images[0].image_url : null;
-
-  const handleAddToCart = async (e: React.MouseEvent) => {
-    e.preventDefault();
-
-    try {
-      await cartService.addToCart({
-        product_id: product.id,
-        product_unit_id: activeUnit.id || `unit-${product.id}`,
-        quantity: 1,
-      });
-    } catch (err: any) {
-      // Seamless guest & fallback shopping cart addition
-    }
-
-    addItem({
-      id: `cart-${product.id}-${activeUnit.id || activeUnit.unit_name}`,
-      product_id: product.id,
-      product_name: product.name,
-      product_unit_id: activeUnit.id || `unit-${product.id}`,
-      unit_name: activeUnit.unit_name || 'Pcs',
-      quantity: 1,
-      unit_price: activeUnit.retail_price || 5000,
-      subtotal: activeUnit.retail_price || 5000,
-      available_stock: activeUnit.stock_quantity ?? 100,
-      is_stock_sufficient: true,
-      added_at: Date.now(),
-    });
-
-    toast.success(`"${product.name}" (${activeUnit.unit_name}) ditambahkan ke keranjang! 🛒`);
-  };
-
-  const handleBuyNow = async (e: React.MouseEvent) => {
-    e.preventDefault();
-    const itemId = `cart-${product.id}-${activeUnit.id || activeUnit.unit_name}`;
-    await handleAddToCart(e);
-    setSelectedForCheckout([itemId]);
-    navigate('/checkout');
-  };
+  const outOfStock = !unit || unit.stock_quantity <= 0;
+  const hasWholesale = unit && unit.wholesale_price < unit.retail_price;
 
   return (
     <motion.div
       whileHover={{ y: -4 }}
-      className="group relative flex flex-col rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden w-full"
+      className="group relative flex w-full flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white p-3 shadow-sm transition-all duration-300 hover:shadow-xl dark:border-slate-800 dark:bg-slate-900 sm:p-4"
     >
-      {/* Wishlist Button */}
       <button
         onClick={() => toggleWishlist(product.id)}
-        className="absolute top-6 right-6 z-10 p-2 rounded-full bg-white/80 dark:bg-slate-800/80 text-slate-400 hover:text-rose-500 backdrop-blur-md shadow-sm transition-colors"
+        aria-label={isLiked ? 'Hapus dari favorit' : 'Tambah ke favorit'}
+        className="absolute right-5 top-5 z-10 rounded-full bg-white/80 p-2 text-slate-400 shadow-sm backdrop-blur-md transition-colors hover:text-rose-500 dark:bg-slate-800/80 sm:right-6 sm:top-6"
       >
         <Heart className={`h-4 w-4 ${isLiked ? 'fill-rose-500 text-rose-500' : ''}`} />
       </button>
 
-      {/* Product Image */}
-      <Link to={`/products/${product.id}`} className="relative h-44 w-full overflow-hidden rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
-        {imageUrl ? (
-          <img
-            src={imageUrl}
-            alt={product.name}
-            className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
-          />
+      <Link to={`/products/${product.id}`} className="relative mb-3 flex h-36 w-full items-center justify-center overflow-hidden rounded-2xl bg-slate-100 dark:bg-slate-800 sm:h-44">
+        {product.image_url ? (
+          <img src={product.image_url} alt={product.name} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
         ) : (
-          <Package className="h-16 w-16 text-slate-300 dark:text-slate-600 group-hover:scale-110 transition-transform duration-300" />
+          <Package className="h-14 w-14 text-slate-300 dark:text-slate-600" />
         )}
-        {activeUnit && activeUnit.stock_quantity < 10 && (
-          <span className="absolute top-2 left-2 rounded-md bg-rose-500 px-2 py-0.5 text-[10px] font-bold text-white uppercase">
-            Stok Terbatas
-          </span>
-        )}
+        {outOfStock ? (
+          <span className="absolute left-2 top-2 rounded-md bg-slate-800 px-2 py-0.5 text-[10px] font-bold uppercase text-white">Stok Habis</span>
+        ) : unit.stock_quantity < 10 ? (
+          <span className="absolute left-2 top-2 rounded-md bg-rose-500 px-2 py-0.5 text-[10px] font-bold uppercase text-white">Sisa {unit.stock_quantity}</span>
+        ) : null}
       </Link>
 
-      {/* Product Title & Info */}
-      <div className="flex-1 flex flex-col">
-        <div className="flex items-center space-x-1 text-amber-400 text-xs mb-1 font-semibold">
-          <Star className="h-3.5 w-3.5 fill-amber-400" />
-          <span>4.9</span>
-          <span className="text-slate-400 font-normal">(120 Terjual)</span>
-        </div>
-
-        <Link to={`/products/${product.id}`} className="font-bold text-sm text-slate-900 dark:text-white line-clamp-2 hover:text-primary-600 transition-colors mb-2">
+      <div className="flex flex-1 flex-col">
+        <span className="mb-1 text-[11px] font-semibold text-slate-400">{product.category?.name}</span>
+        <Link to={`/products/${product.id}`} className="mb-2 line-clamp-2 text-sm font-bold text-slate-900 transition-colors hover:text-primary-600 dark:text-white">
           {product.name}
         </Link>
 
-        {activeUnit && (
-          <div className="mt-auto pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1">
-            <div className="flex items-center justify-between gap-1">
-              {availableUnits.length > 1 ? (
-                <div className="flex items-center space-x-1">
-                  <span className="text-[10px] font-bold text-slate-500">Satuan:</span>
-                  <select
-                    value={selectedUnitIndex}
-                    onChange={(e) => setSelectedUnitIndex(Number(e.target.value))}
-                    className="text-xs font-bold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 border-0 rounded-lg px-2 py-0.5 focus:ring-1 focus:ring-primary-500 cursor-pointer"
-                  >
-                    {availableUnits.map((u: any, idx: number) => (
-                      <option key={u.id || idx} value={idx}>
-                        {u.unit_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <span className="inline-flex items-center rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:text-slate-300">
-                  Satuan: {activeUnit.unit_name}
-                </span>
-              )}
+        {unit && (
+          <div className="mt-auto space-y-1 border-t border-slate-100 pt-2 dark:border-slate-800">
+            {product.units.length > 1 ? (
+              <select
+                value={unitIndex}
+                onChange={(e) => setUnitIndex(Number(e.target.value))}
+                className="rounded-lg border-0 bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-800 focus:ring-1 focus:ring-primary-500 dark:bg-slate-800 dark:text-slate-200"
+                aria-label="Pilih satuan"
+              >
+                {product.units.map((u, idx) => (
+                  <option key={u.id} value={idx}>{u.unit_name}</option>
+                ))}
+              </select>
+            ) : (
+              <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{unit.unit_name}</span>
+            )}
+
+            <div className="text-base font-black text-slate-900 dark:text-white">
+              {formatCurrency(unit.retail_price)}
+              <span className="ml-1 text-[10px] font-normal text-slate-400">/ {unit.unit_name}</span>
             </div>
 
-            <div className="flex items-baseline justify-between pt-0.5">
-              <div>
-                <div className="text-base font-black text-slate-900 dark:text-white">
-                  {formatCurrency(activeUnit.retail_price)}
-                  <span className="text-[10px] text-slate-400 font-normal ml-1">/ {activeUnit.unit_name}</span>
-                </div>
-              </div>
-            </div>
-
-            {activeUnit.wholesale_price > 0 && (
-              <div className="text-[11px] font-semibold text-primary-600 dark:text-primary-400">
-                Grosir: {formatCurrency(activeUnit.wholesale_price)} <span className="text-slate-400 font-normal">(Min {activeUnit.min_wholesale_qty} {activeUnit.unit_name})</span>
+            {hasWholesale && (
+              <div className={`text-[11px] font-semibold ${isB2B ? 'text-primary-600 dark:text-primary-400' : 'text-slate-500'}`}>
+                Grosir {formatCurrency(unit.wholesale_price)} <span className="font-normal">(min {unit.min_wholesale_qty}{isB2B ? '' : ', mitra toko'})</span>
               </div>
             )}
           </div>
         )}
       </div>
 
-      {/* Action Buttons: Shopee Standard Grid Style */}
       <div className="mt-3 flex items-center gap-2">
         <button
-          onClick={handleAddToCart}
-          title="+ Keranjang"
-          className="flex items-center justify-center p-2.5 rounded-2xl border border-primary-600/30 bg-primary-50 dark:bg-primary-950/40 text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-900/60 transition-all shadow-sm flex-shrink-0 active:scale-95"
+          onClick={() => unit && add(product, unit)}
+          disabled={outOfStock || adding}
+          title="Tambah ke keranjang"
+          aria-label="Tambah ke keranjang"
+          className="flex flex-shrink-0 items-center justify-center rounded-2xl border border-primary-600/30 bg-primary-50 p-2.5 text-primary-600 shadow-sm transition-all hover:bg-primary-100 active:scale-95 disabled:opacity-40 dark:bg-primary-950/40 dark:text-primary-400"
         >
           <ShoppingBag className="h-4 w-4" />
         </button>
-
         <button
-          onClick={handleBuyNow}
-          title="Beli Langsung Sekarang"
-          className="flex-1 flex items-center justify-center space-x-1.5 rounded-2xl bg-primary-600 hover:bg-primary-700 py-2.5 px-3 text-xs font-extrabold text-white transition-all shadow-md shadow-primary-600/20 active:scale-95"
+          onClick={() => unit && add(product, unit, 1, true)}
+          disabled={outOfStock || adding}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-primary-600 px-3 py-2.5 text-xs font-extrabold text-white shadow-md shadow-primary-600/20 transition-all hover:bg-primary-700 active:scale-95 disabled:opacity-40"
         >
-          <Zap className="h-3.5 w-3.5 text-amber-300 fill-amber-300" />
-          <span>Beli Sekarang</span>
+          <Zap className="h-3.5 w-3.5 fill-amber-300 text-amber-300" />
+          <span>{outOfStock ? 'Habis' : 'Beli'}</span>
         </button>
       </div>
     </motion.div>

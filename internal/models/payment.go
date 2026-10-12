@@ -24,12 +24,12 @@ type Payment struct {
 	Notes           string     `gorm:"type:text" json:"notes,omitempty"`
 
 	// Relationships
-	Order         *Order          `gorm:"foreignKey:OrderID" json:"order,omitempty"`
-	Invoice       *Invoice        `gorm:"foreignKey:InvoiceID" json:"invoice,omitempty"`
-	User          *User           `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	PaymentMethod *PaymentMethod  `gorm:"foreignKey:PaymentMethodID" json:"payment_method,omitempty"`
+	Order         *Order               `gorm:"foreignKey:OrderID" json:"order,omitempty"`
+	Invoice       *Invoice             `gorm:"foreignKey:InvoiceID" json:"invoice,omitempty"`
+	User          *User                `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	PaymentMethod *PaymentMethod       `gorm:"foreignKey:PaymentMethodID" json:"payment_method,omitempty"`
 	Transactions  []PaymentTransaction `gorm:"foreignKey:PaymentID" json:"transactions,omitempty"`
-	Logs          []PaymentLog    `gorm:"foreignKey:PaymentID" json:"logs,omitempty"`
+	Logs          []PaymentLog         `gorm:"foreignKey:PaymentID" json:"logs,omitempty"`
 }
 
 func (Payment) TableName() string {
