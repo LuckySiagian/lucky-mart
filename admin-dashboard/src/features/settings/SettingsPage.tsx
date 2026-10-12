@@ -1,21 +1,33 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { CreditCard, Lock, Truck, User as UserIcon } from 'lucide-react';
+import { CreditCard, Lock, Store, Truck, User as UserIcon } from 'lucide-react';
 import { PageHeader } from '../../components/common/PageHeader';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { Field, btnPrimary, inputClass } from '../../components/common/Modal';
 import { Card, FilterTabs } from '../../components/common/Pagination';
-import { authService, paymentService, shippingService } from '../../services/apiServices';
+import { authService, paymentService, shippingService, storeService } from '../../services/apiServices';
 import { useAuthStore, MANAGER_ROLES, hasRole } from '../../store/useAuthStore';
 import { formatCurrency, getErrorMessage, ROLE_LABELS } from '../../lib/utils';
-import type { PaymentMethod, ShippingMethod } from '../../types';
+import type { PaymentMethod, ShippingMethod, StoreInfo } from '../../types';
 
-type Tab = 'profile' | 'password' | 'payment' | 'shipping';
+type Tab = 'store' | 'profile' | 'password' | 'payment' | 'shipping';
+
+const STORE_FIELDS: { key: keyof StoreInfo; label: string; placeholder: string; hint?: string; multiline?: boolean }[] = [
+  { key: 'name', label: 'Nama toko', placeholder: 'Lucky Mart' },
+  { key: 'tagline', label: 'Slogan singkat', placeholder: 'Toko sembako keluarga, grosir & eceran' },
+  { key: 'address', label: 'Alamat toko', placeholder: 'Jl. ..., Kel. ..., Kec. ...', hint: 'Ditampilkan untuk pelanggan yang ambil sendiri di toko.', multiline: true },
+  { key: 'maps_url', label: 'Link Google Maps (opsional)', placeholder: 'https://maps.app.goo.gl/...' },
+  { key: 'whatsapp', label: 'Nomor WhatsApp toko', placeholder: '081234567890', hint: 'Muncul sebagai tombol "Chat WhatsApp toko" untuk pelanggan.' },
+  { key: 'open_hours', label: 'Jam buka', placeholder: 'Setiap hari 07.00 – 21.00' },
+  { key: 'announcement', label: 'Pengumuman di bagian atas toko online', placeholder: 'Minyak goreng promo minggu ini!' },
+  { key: 'receipt_note', label: 'Catatan di bawah nota', placeholder: 'Terima kasih sudah berbelanja!' },
+];
 
 export const SettingsPage: React.FC = () => {
   const { user, setUser } = useAuthStore();
   const isManager = hasRole(user, MANAGER_ROLES);
-  const [tab, setTab] = useState<Tab>('profile');
+  const [tab, setTab] = useState<Tab>(isManager ? 'store' : 'profile');
+  const [store, setStore] = useState<StoreInfo | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [profile, setProfile] = useState({ full_name: user?.full_name || '', email: user?.email || '' });
@@ -25,6 +37,7 @@ export const SettingsPage: React.FC = () => {
 
   useEffect(() => {
     if (tab === 'payment' && isManager) paymentService.getMethods().then(setMethods).catch((e) => toast.error(getErrorMessage(e)));
+    if (tab === 'store' && isManager) storeService.get().then(setStore).catch((e) => toast.error(getErrorMessage(e)));
     if (tab === 'shipping') shippingService.getMethods().then(setShipping).catch((e) => toast.error(getErrorMessage(e)));
   }, [tab, isManager]);
 
@@ -68,7 +81,21 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const saveStore = async () => {
+    if (!store) return;
+    setBusy(true);
+    try {
+      setStore(await storeService.update(store));
+      toast.success('Info toko disimpan.');
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const tabs = [
+    ...(isManager ? [{ value: 'store', label: 'Info toko' }] : []),
     { value: 'profile', label: 'Profil saya' },
     { value: 'password', label: 'Kata sandi' },
     ...(isManager ? [{ value: 'payment', label: 'Metode pembayaran' }] : []),
@@ -79,6 +106,32 @@ export const SettingsPage: React.FC = () => {
     <div className="space-y-5">
       <PageHeader title="Pengaturan" subtitle="Akun Anda dan pengaturan toko." />
       <FilterTabs value={tab} onChange={(v) => setTab(v as Tab)} options={tabs} />
+
+      {tab === 'store' && isManager && (
+        <Card className="max-w-2xl p-5">
+          <div className="mb-4 flex items-center gap-2 text-sm font-semibold">
+            <Store className="h-4 w-4" /> Info toko yang dilihat pelanggan dan tercetak di nota
+          </div>
+          {!store ? (
+            <div className="text-sm text-slate-500">Memuat...</div>
+          ) : (
+            <div className="grid gap-3">
+              {STORE_FIELDS.map((f) => (
+                <Field key={f.key} label={f.label} hint={f.hint}>
+                  {f.multiline ? (
+                    <textarea className={inputClass} rows={2} value={store[f.key]} placeholder={f.placeholder} onChange={(e) => setStore({ ...store, [f.key]: e.target.value })} />
+                  ) : (
+                    <input className={inputClass} value={store[f.key]} placeholder={f.placeholder} onChange={(e) => setStore({ ...store, [f.key]: e.target.value })} />
+                  )}
+                </Field>
+              ))}
+              <div>
+                <button className={btnPrimary} disabled={busy} onClick={saveStore}>Simpan Info Toko</button>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
 
       {tab === 'profile' && (
         <Card className="max-w-xl p-5">

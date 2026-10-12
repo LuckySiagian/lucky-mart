@@ -185,6 +185,9 @@ func (s *productService) CreateProduct(ctx context.Context, req dto.CreateProduc
 		}
 
 		if url := strings.TrimSpace(req.ImageURL); url != "" {
+			if !IsAllowedImageURL(url) {
+				return errInvalidProductImage
+			}
 			if err := tx.Create(&models.ProductImage{ProductID: product.ID, ImageURL: url, IsPrimary: true}).Error; err != nil {
 				return err
 			}
@@ -308,6 +311,9 @@ func (s *productService) UpdateProduct(ctx context.Context, id uuid.UUID, req dt
 
 		if req.ImageURL != nil {
 			url := strings.TrimSpace(*req.ImageURL)
+			if url != "" && !IsAllowedImageURL(url) {
+				return errInvalidProductImage
+			}
 			if err := tx.Where("product_id = ?", product.ID).Delete(&models.ProductImage{}).Error; err != nil {
 				return err
 			}

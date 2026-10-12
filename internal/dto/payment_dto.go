@@ -14,7 +14,7 @@ type CreatePaymentDTO struct {
 
 type UploadProofDTO struct {
 	PaymentID     uuid.UUID `json:"payment_id" binding:"required"`
-	ProofImageURL string    `json:"proof_image_url" binding:"required,url,max=500"`
+	ProofImageURL string    `json:"proof_image_url" binding:"required,max=500"` // uploaded /uploads/images/... path or an http(s) link
 	Notes         string    `json:"notes" binding:"omitempty,max=500"`
 }
 

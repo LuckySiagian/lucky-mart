@@ -195,3 +195,14 @@ export interface Notification {
   is_read: boolean;
   created_at: string;
 }
+
+export interface StoreInfo {
+  name: string;
+  tagline: string;
+  address: string;
+  whatsapp: string;
+  open_hours: string;
+  maps_url: string;
+  receipt_note: string;
+  announcement: string;
+}

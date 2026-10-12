@@ -82,3 +82,11 @@ export const TONE_CLASS: Record<string, string> = {
 export const PASSWORD_HINT = 'Minimal 8 karakter, ada huruf besar, huruf kecil, angka, dan simbol (contoh: Rahasia#123).';
 
 export const isPhone = (s: string) => /^(08|\+628)[0-9]{8,11}$/.test(s.trim());
+
+/** wa.me link for an Indonesian phone number such as 0812... or +62812... */
+export function whatsappLink(phone?: string, text?: string): string | null {
+  const digits = (phone || '').replace(/\D/g, '');
+  if (digits.length < 9) return null;
+  const intl = digits.startsWith('0') ? `62${digits.slice(1)}` : digits;
+  return `https://wa.me/${intl}${text ? `?text=${encodeURIComponent(text)}` : ''}`;
+}

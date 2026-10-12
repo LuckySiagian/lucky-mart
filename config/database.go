@@ -101,5 +101,6 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.NotificationTemplate{},
 		&models.NotificationLog{},
 		&models.EventLog{},
+		&models.StoreSetting{},
 	)
 }

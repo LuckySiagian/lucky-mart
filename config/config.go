@@ -16,6 +16,7 @@ type Config struct {
 	Database DatabaseConfig `mapstructure:"database"`
 	JWT      JWTConfig      `mapstructure:"jwt"`
 	CORS     CORSConfig     `mapstructure:"cors"`
+	Storage  StorageConfig  `mapstructure:"storage"`
 }
 
 type AppConfig struct {
@@ -48,6 +49,12 @@ type JWTConfig struct {
 	RefreshSecret string        `mapstructure:"JWT_REFRESH_SECRET"`
 	AccessTTL     time.Duration `mapstructure:"JWT_ACCESS_TTL"`
 	RefreshTTL    time.Duration `mapstructure:"JWT_REFRESH_TTL"`
+}
+
+// StorageConfig says where uploaded files (product photos, transfer proofs)
+// are kept on disk. They are served back under /uploads/images.
+type StorageConfig struct {
+	UploadDir string `mapstructure:"UPLOAD_DIR"`
 }
 
 type CORSConfig struct {
@@ -98,6 +105,8 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("JWT.JWT_REFRESH_TTL", 7*24*time.Hour)
 
 	viper.SetDefault("CORS.ALLOW_ORIGINS", "*")
+
+	viper.SetDefault("STORAGE.UPLOAD_DIR", "uploads")
 
 	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -159,6 +168,8 @@ func LoadConfig() (*Config, error) {
 	cfg.JWT.RefreshTTL = getDuration("JWT.JWT_REFRESH_TTL")
 
 	cfg.CORS.AllowOrigins = splitList(getString("CORS.ALLOW_ORIGINS"))
+
+	cfg.Storage.UploadDir = getString("STORAGE.UPLOAD_DIR")
 
 	if err := cfg.validate(); err != nil {
 		return nil, err

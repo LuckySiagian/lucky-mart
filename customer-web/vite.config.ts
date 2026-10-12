@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
+const apiTarget = process.env.API_PROXY_TARGET || 'http://localhost:8080';
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -12,10 +14,9 @@ export default defineConfig({
   server: {
     port: 3001,
     proxy: {
-      '/api': {
-        target: process.env.API_PROXY_TARGET || 'http://localhost:8080',
-        changeOrigin: true,
-      },
+      '/api': { target: apiTarget, changeOrigin: true },
+      // Uploaded photos are served by the backend.
+      '/uploads': { target: apiTarget, changeOrigin: true },
     },
   },
 });

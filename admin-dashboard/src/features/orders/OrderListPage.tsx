@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, CheckCheck, ExternalLink, Loader2, MapPin, MessageCircle, Package, Phone, Store, Truck, XCircle } from 'lucide-react';
+import { ArrowRight, CheckCheck, ClipboardList, ExternalLink, Loader2, MapPin, MessageCircle, Package, Phone, Printer, Store, Truck, XCircle } from 'lucide-react';
 import { PageHeader } from '../../components/common/PageHeader';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { LoadingSkeleton } from '../../components/common/LoadingSkeleton';
@@ -264,6 +264,14 @@ export const OrderListPage: React.FC = () => {
               <span className="text-xs text-slate-500">
                 {DELIVERY_LABELS[selected.delivery_type] || 'Diantar'} · {paymentMethodLabel(selected.payment_method)}
               </span>
+              <span className="ml-auto flex gap-1.5">
+                <a href={`/orders/${selected.id}/print?mode=packing`} target="_blank" rel="noreferrer" className={btnSecondary}>
+                  <ClipboardList className="h-4 w-4" /> Daftar Barang
+                </a>
+                <a href={`/orders/${selected.id}/print`} target="_blank" rel="noreferrer" className={btnSecondary}>
+                  <Printer className="h-4 w-4" /> Cetak Nota
+                </a>
+              </span>
             </div>
 
             {selected.status === 'PENDING_PAYMENT' && (
@@ -274,8 +282,15 @@ export const OrderListPage: React.FC = () => {
                       Pelanggan sudah kirim bukti transfer {formatCurrency(proofPayment.grand_total)}. Cek rekening toko, lalu:
                     </div>
                     {proofPayment.proof_image_url && (
-                      <a href={proofPayment.proof_image_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-brand-700 underline dark:text-brand-400">
-                        <ExternalLink className="h-3.5 w-3.5" /> Lihat foto bukti transfer
+                      <a href={proofPayment.proof_image_url} target="_blank" rel="noreferrer" className="block w-fit" title="Buka ukuran penuh">
+                        <img
+                          src={proofPayment.proof_image_url}
+                          alt="Bukti transfer"
+                          className="max-h-64 rounded-lg border border-amber-200 bg-white object-contain dark:border-amber-900"
+                        />
+                        <span className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-brand-700 underline dark:text-brand-400">
+                          <ExternalLink className="h-3.5 w-3.5" /> Buka ukuran penuh
+                        </span>
                       </a>
                     )}
                     {isManager ? (

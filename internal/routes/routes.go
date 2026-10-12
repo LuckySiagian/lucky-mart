@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"strings"
+
 	"backend-sembako/config"
 	_ "backend-sembako/docs"
 	"backend-sembako/internal/handler"
@@ -26,6 +28,7 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	customvalidator.RegisterCustomValidators()
 
 	r := gin.New()
+	r.MaxMultipartMemory = 8 << 20
 
 	// Global Middleware Registration
 	r.Use(middleware.RequestID())
@@ -110,6 +113,16 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	templateHandler := handler.NewNotificationTemplateHandler(templateService)
 	eventHandler := handler.NewEventHandlerController(eventListenerService)
 	dashboardHandler := handler.NewDashboardHandler(services.NewDashboardService(db))
+	uploadHandler := handler.NewUploadHandler(services.NewUploadService(cfg.Storage.UploadDir))
+	storeHandler := handler.NewStoreHandler(services.NewStoreService(db))
+
+	// Uploaded photos. Only the images folder is public; nosniff stops a
+	// browser from treating a file as anything but the image it was saved as.
+	images := r.Group(strings.TrimSuffix(services.ImagePathPrefix, "/"), func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	})
+	images.Static("/", services.ImageDir(cfg.Storage.UploadDir))
 
 	// Swagger Endpoint
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -136,6 +149,13 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		dashboard := v1.Group("/admin/dashboard")
 		dashboard.Use(middleware.JWTAuth(jwtService), middleware.RequireRoles(warehouseRole...))
 		dashboard.GET("", dashboardHandler.GetStats)
+
+		v1.GET("/store", storeHandler.GetStore)
+		v1.PUT("/store", middleware.JWTAuth(jwtService), middleware.RequireRoles(managerRoles...), storeHandler.UpdateStore)
+
+		uploads := v1.Group("/uploads")
+		uploads.Use(middleware.JWTAuth(jwtService))
+		uploads.POST("/images", uploadHandler.UploadImage)
 	}
 
 	return r

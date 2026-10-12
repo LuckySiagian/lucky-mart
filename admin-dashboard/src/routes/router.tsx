@@ -9,6 +9,7 @@ import { CategoryListPage } from '../features/products/CategoryListPage';
 import { InventoryPage } from '../features/inventory/InventoryPage';
 import { StockMovementPage } from '../features/inventory/StockMovementPage';
 import { OrderListPage } from '../features/orders/OrderListPage';
+import { OrderPrintPage } from '../features/orders/OrderPrintPage';
 import { PaymentListPage } from '../features/payments/PaymentListPage';
 import { CreditLedgerPage } from '../features/payments/CreditLedgerPage';
 import { ShipmentListPage } from '../features/shipping/ShipmentListPage';
@@ -28,6 +29,8 @@ export const router = createBrowserRouter([
   {
     element: <ProtectedRoute />,
     children: [
+      // Printable pages, without the sidebar and top bar.
+      { path: '/orders/:id/print', element: <OrderPrintPage /> },
       {
         element: <MainLayout />,
         children: [

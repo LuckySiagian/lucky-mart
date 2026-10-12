@@ -7,6 +7,7 @@ import { useCartStore } from '../../store/useCartStore';
 import { useWishlistStore } from '../../store/useWishlistStore';
 import { useThemeStore } from '../../store/useThemeStore';
 import { authService, notificationService } from '../../services/apiServices';
+import { useStoreInfo } from '../../hooks/useStoreInfo';
 
 const CountBadge: React.FC<{ n: number; tone?: string }> = ({ n, tone = 'bg-primary-600' }) =>
   n > 0 ? (
@@ -17,6 +18,7 @@ const CountBadge: React.FC<{ n: number; tone?: string }> = ({ n, tone = 'bg-prim
 
 export const Navbar: React.FC = () => {
   const navigate = useNavigate();
+  const store = useStoreInfo();
   const { user, isAuthenticated, logout } = useAuthStore();
   const { totalItems, refresh: refreshCart, reset: resetCart } = useCartStore();
   const wishlistCount = useWishlistStore((s) => s.wishlistIds.length);
@@ -70,7 +72,7 @@ export const Navbar: React.FC = () => {
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/90 shadow-sm backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/90">
       <div className="hidden bg-primary-700 px-4 py-1.5 text-center text-xs font-medium text-white sm:block">
-        Belanja kebutuhan dapur dari rumah — diantar kurir toko. Mitra warung dapat harga grosir.
+        {store?.announcement || 'Pesan dari rumah — diantar atau ambil sendiri di toko. Mitra warung dapat harga grosir.'}
       </div>
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">

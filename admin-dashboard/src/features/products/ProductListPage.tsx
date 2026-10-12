@@ -8,6 +8,7 @@ import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorState } from '../../components/common/ErrorState';
 import { Field, Modal, btnDanger, btnPrimary, btnSecondary, inputClass } from '../../components/common/Modal';
 import { Card, Pagination, SearchInput, Table } from '../../components/common/Pagination';
+import { ImageUpload } from '../../components/common/ImageUpload';
 import { productService } from '../../services/apiServices';
 import { useList } from '../../hooks/useList';
 import { useAuthStore, MANAGER_ROLES, hasRole } from '../../store/useAuthStore';
@@ -256,8 +257,8 @@ export const ProductListPage: React.FC = () => {
             <input className={inputClass} value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value.toUpperCase() })} />
           </Field>
           <div className="sm:col-span-2">
-            <Field label="Link foto produk" hint="Sementara berupa link gambar. Fitur unggah foto langsung menyusul.">
-              <input className={inputClass} value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://..." />
+            <Field label="Foto produk" hint="Foto langsung dari HP atau pilih dari galeri. Otomatis dikecilkan agar cepat dibuka.">
+              <ImageUpload value={form.image_url} onChange={(url) => setForm({ ...form, image_url: url })} label="Pilih / ambil foto produk" />
             </Field>
           </div>
           <div className="sm:col-span-2">

@@ -16,6 +16,7 @@ import type {
   Shipment,
   ShippingMethod,
   User,
+  StoreInfo,
 } from '../types';
 
 // Every API response is { success, message, data }; these helpers return `data`.
@@ -115,4 +116,8 @@ export const notificationService = {
   unreadCount: () => data<{ unread: number }>(api.get('/notifications/unread-count')),
   markRead: (id: string) => data(api.patch(`/notifications/${id}/read`)),
   markAllRead: () => data(api.patch('/notifications/read-all')),
+};
+
+export const storeService = {
+  get: () => data<StoreInfo>(api.get('/store')),
 };

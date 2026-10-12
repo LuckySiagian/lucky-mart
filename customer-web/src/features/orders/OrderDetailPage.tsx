@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Check, Loader2, MapPin, Package, Store, Truck, Upload, XCircle } from 'lucide-react';
+import { ArrowLeft, Check, Clock, Loader2, MapPin, MessageCircle, Package, Store, Truck, Upload, XCircle } from 'lucide-react';
 import { orderService, paymentService, shippingService } from '../../services/apiServices';
 import { OrderStatusBadge, Panel, PaymentStatusBadge, inputClass } from '../../components/common/Badge';
+import { ImageUpload } from '../../components/common/ImageUpload';
 import { ErrorState } from '../../components/common/ErrorState';
-import { formatCurrency, formatDate, getErrorMessage, orderStatusInfo, SHIPMENT_STATUS } from '../../lib/utils';
+import { formatCurrency, formatDate, getErrorMessage, orderStatusInfo, SHIPMENT_STATUS, whatsappLink } from '../../lib/utils';
+import { useStoreInfo } from '../../hooks/useStoreInfo';
 import type { Order, PaymentMethod, Shipment } from '../../types';
 
 const STEP_INDEX: Record<string, number> = { CREATED: 0, PAID: 0, CONFIRMED: 0, PROCESSING_PACKING: 1, OUT_FOR_DELIVERY: 2, COMPLETED: 3 };
@@ -42,6 +44,7 @@ const OrderSteps: React.FC<{ order: Order }> = ({ order }) => {
 
 export const OrderDetailPage: React.FC = () => {
   const { id = '' } = useParams();
+  const store = useStoreInfo();
   const [order, setOrder] = useState<Order | null>(null);
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -89,10 +92,10 @@ export const OrderDetailPage: React.FC = () => {
 
   const uploadProof = async () => {
     if (!payment) return;
-    if (!/^https?:\/\/\S+$/.test(proofUrl.trim())) return toast.error('Masukkan link gambar bukti transfer yang valid (diawali https://).');
+    if (!proofUrl) return toast.error('Pilih foto bukti transfer terlebih dahulu.');
     setBusy(true);
     try {
-      await paymentService.uploadProof({ payment_id: payment.id, proof_image_url: proofUrl.trim() });
+      await paymentService.uploadProof({ payment_id: payment.id, proof_image_url: proofUrl });
       toast.success('Bukti transfer terkirim. Toko akan segera memverifikasi.');
       setProofUrl('');
       load();
@@ -159,18 +162,16 @@ export const OrderDetailPage: React.FC = () => {
               </p>
             ) : (
               <div className="mt-4 space-y-2">
-                <label className="text-xs font-semibold text-slate-500">Link foto bukti transfer</label>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <input className={inputClass} value={proofUrl} onChange={(e) => setProofUrl(e.target.value)} placeholder="https://..." />
-                  <button
-                    onClick={uploadProof}
-                    disabled={busy}
-                    className="flex items-center justify-center gap-1.5 rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-primary-700 disabled:opacity-50"
-                  >
-                    <Upload className="h-4 w-4" /> Kirim
-                  </button>
-                </div>
-                <p className="text-[11px] text-slate-400">Unggah foto bukti ke Google Drive / WhatsApp Web lalu tempel link-nya. Fitur unggah foto langsung segera hadir.</p>
+                <label className="text-xs font-semibold text-slate-500">Foto bukti transfer</label>
+                <ImageUpload value={proofUrl} onChange={setProofUrl} label="Foto / pilih bukti transfer" />
+                <button
+                  onClick={uploadProof}
+                  disabled={busy || !proofUrl}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary-600 px-4 py-3 text-sm font-bold text-white hover:bg-primary-700 disabled:opacity-50 sm:w-auto"
+                >
+                  <Upload className="h-4 w-4" /> Kirim Bukti Transfer
+                </button>
+                <p className="text-[11px] text-slate-400">Foto struk ATM atau screenshot m-banking juga boleh.</p>
               </div>
             )}
           </div>
@@ -182,6 +183,32 @@ export const OrderDetailPage: React.FC = () => {
           <p className="text-sm text-slate-600 dark:text-slate-400">
             Tidak ada ongkir. Kami kabari lewat notifikasi saat pesanan siap diambil.
           </p>
+          {store && (store.address || store.open_hours || store.whatsapp) && (
+            <div className="mt-3 space-y-1.5 rounded-xl bg-slate-50 p-3 text-sm dark:bg-slate-800/60">
+              {store.address && (
+                <div className="flex items-start gap-2">
+                  <MapPin className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary-600" />
+                  <span>
+                    {store.address}
+                    {store.maps_url && (
+                      <a href={store.maps_url} target="_blank" rel="noreferrer" className="ml-1 font-semibold text-primary-600 underline">Buka peta</a>
+                    )}
+                  </span>
+                </div>
+              )}
+              {store.open_hours && <div className="flex items-center gap-2"><Clock className="h-4 w-4 text-primary-600" /> {store.open_hours}</div>}
+              {whatsappLink(store.whatsapp) && (
+                <a
+                  href={whatsappLink(store.whatsapp, `Halo, saya mau tanya pesanan ${order.order_number}.`)!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700"
+                >
+                  <MessageCircle className="h-3.5 w-3.5" /> Chat toko
+                </a>
+              )}
+            </div>
+          )}
           {order.address?.notes && <div className="mt-1 text-xs italic text-slate-500">Catatan: {order.address.notes}</div>}
         </Panel>
       ) : (

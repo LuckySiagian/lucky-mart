@@ -274,3 +274,14 @@ export interface DashboardStats {
   top_products: { product_name: string; quantity: number; revenue: number }[];
   recent_orders: { id: string; order_number: string; customer_name: string; grand_total: number; status: OrderStatus; order_date: string }[];
 }
+
+export interface StoreInfo {
+  name: string;
+  tagline: string;
+  address: string;
+  whatsapp: string;
+  open_hours: string;
+  maps_url: string;
+  receipt_note: string;
+  announcement: string;
+}

@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, CreditCard, Loader2, MapPin, Package, Stor
 import { addressService, cartService, creditService, orderService, paymentService, shippingService, type DeliveryType } from '../../services/apiServices';
 import { useCartStore } from '../../store/useCartStore';
 import { useAuthStore } from '../../store/useAuthStore';
+import { useStoreInfo } from '../../hooks/useStoreInfo';
 import { Field, Panel, inputClass } from '../../components/common/Badge';
 import { formatCurrency, getErrorMessage, isPhone } from '../../lib/utils';
 import type { Address, CheckoutSummary, CreditLedger, PaymentMethod, ShippingMethod } from '../../types';
@@ -14,6 +15,7 @@ const NEW_ADDRESS = 'new';
 export const CheckoutPage: React.FC = () => {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const store = useStoreInfo();
   const { selectedIds, setSelected, refresh: refreshCart } = useCartStore();
 
   const [addresses, setAddresses] = useState<Address[]>([]);
@@ -171,7 +173,7 @@ export const CheckoutPage: React.FC = () => {
             <div className="grid gap-3 sm:grid-cols-2">
               {[
                 { value: 'DELIVERY' as const, icon: Truck, title: 'Diantar ke rumah', sub: shippings[0] ? `Ongkir mulai ${formatCurrency(Math.min(...shippings.map((s) => s.base_rate)))}` : 'Diantar kurir toko' },
-                { value: 'PICKUP' as const, icon: Store, title: 'Ambil sendiri di toko', sub: 'Gratis ongkir' },
+                { value: 'PICKUP' as const, icon: Store, title: 'Ambil sendiri di toko', sub: store?.address ? `Gratis ongkir · ${store.address}` : 'Gratis ongkir' },
               ].map((o) => (
                 <button
                   key={o.value}

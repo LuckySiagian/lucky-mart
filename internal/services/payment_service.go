@@ -200,6 +200,9 @@ func (s *paymentService) UploadProof(ctx context.Context, userID uuid.UUID, req 
 
 	oldStatus := payment.Status
 	proof := strings.TrimSpace(req.ProofImageURL)
+	if !IsAllowedImageURL(proof) {
+		return nil, errors.New("foto bukti transfer tidak valid; unggah ulang fotonya")
+	}
 	payment.ProofImageURL = &proof
 	payment.Status = constants.PaymentStatusWaitingConfirmation
 	payment.Notes = req.Notes

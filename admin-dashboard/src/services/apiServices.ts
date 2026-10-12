@@ -18,6 +18,7 @@ import type {
   ShippingMethod,
   StockMovement,
   User,
+  StoreInfo,
 } from '../types';
 
 // Every API response is { success, message, data }; these helpers return `data`.
@@ -145,4 +146,9 @@ export const userService = {
   verifyB2B: (id: string, status: 'APPROVED' | 'REJECTED' | 'PENDING', credit_limit?: number) =>
     data<User>(api.patch(`/users/${id}/b2b`, { status, credit_limit })),
   deleteUser: (id: string) => data(api.delete(`/users/${id}`)),
+};
+
+export const storeService = {
+  get: () => data<StoreInfo>(api.get('/store')),
+  update: (body: StoreInfo) => data<StoreInfo>(api.put('/store', body)),
 };
