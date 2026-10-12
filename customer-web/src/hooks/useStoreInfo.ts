@@ -10,7 +10,11 @@ let pending: Promise<StoreInfo> | null = null;
 export function useStoreInfo(): StoreInfo | null {
   const [info, setInfo] = useState<StoreInfo | null>(cached);
   useEffect(() => {
-    if (cached) return;
+    // The fetch may have finished between this render and the effect.
+    if (cached) {
+      setInfo(cached);
+      return;
+    }
     pending ??= storeService.get().then((s) => (cached = s));
     pending.then(setInfo).catch(() => {
       pending = null;
