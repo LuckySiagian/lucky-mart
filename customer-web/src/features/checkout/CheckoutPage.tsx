@@ -172,7 +172,10 @@ export const CheckoutPage: React.FC = () => {
           <Panel title="Cara terima barang">
             <div className="grid gap-3 sm:grid-cols-2">
               {[
-                { value: 'DELIVERY' as const, icon: Truck, title: 'Diantar ke rumah', sub: shippings[0] ? `Ongkir mulai ${formatCurrency(Math.min(...shippings.map((s) => s.base_rate)))}` : 'Diantar kurir toko' },
+                { value: 'DELIVERY' as const, icon: Truck, title: 'Diantar ke rumah', sub: [
+                    shippings[0] ? `Ongkir ${formatCurrency(Math.min(...shippings.map((s) => s.base_rate)))}` : 'Diantar kurir toko',
+                    store?.free_shipping_min ? `gratis mulai ${formatCurrency(store.free_shipping_min)}` : '',
+                  ].filter(Boolean).join(', ') },
                 { value: 'PICKUP' as const, icon: Store, title: 'Ambil sendiri di toko', sub: store?.address ? `Gratis ongkir · ${store.address}` : 'Gratis ongkir' },
               ].map((o) => (
                 <button
@@ -319,7 +322,14 @@ export const CheckoutPage: React.FC = () => {
               </ul>
               <div className="space-y-1.5 border-t border-slate-100 pt-3 text-sm dark:border-slate-800">
                 <div className="flex justify-between text-slate-600 dark:text-slate-400"><span>Subtotal ({summary.total_items} barang)</span><span>{formatCurrency(summary.subtotal_amount)}</span></div>
-                <div className="flex justify-between text-slate-600 dark:text-slate-400"><span>Ongkir</span><span>{pickup ? 'Gratis (ambil di toko)' : formatCurrency(summary.estimated_shipping_fee)}</span></div>
+                <div className="flex justify-between text-slate-600 dark:text-slate-400"><span>Ongkir</span><span>{pickup ? 'Gratis (ambil di toko)' : summary.estimated_shipping_fee === 0 ? 'Gratis' : formatCurrency(summary.estimated_shipping_fee)}</span></div>
+                {!pickup && summary.free_shipping_min > 0 && (
+                  <div className={`rounded-lg px-2 py-1 text-xs font-semibold ${summary.subtotal_amount >= summary.free_shipping_min ? 'bg-primary-50 text-primary-700 dark:bg-primary-950/40 dark:text-primary-300' : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'}`}>
+                    {summary.subtotal_amount >= summary.free_shipping_min
+                      ? `Gratis ongkir untuk belanja di atas ${formatCurrency(summary.free_shipping_min)}`
+                      : `Tambah ${formatCurrency(summary.free_shipping_min - summary.subtotal_amount)} lagi untuk gratis ongkir`}
+                  </div>
+                )}
                 <div className="flex justify-between pt-2 text-lg font-black"><span>Total</span><span className="text-primary-600">{formatCurrency(total)}</span></div>
               </div>
               {summary.validation_errors && summary.validation_errors.length > 0 && (

@@ -62,7 +62,7 @@ func InitDatabase(cfg *DatabaseConfig, env string) (*gorm.DB, error) {
 func AutoMigrate(db *gorm.DB) error {
 	logger.Log.Info().Msg("Starting PostgreSQL Auto-Migration for all domain entities...")
 
-	return db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.User{},
 		&models.RefreshToken{},
 		&models.LoginHistory{},
@@ -103,4 +103,20 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.EventLog{},
 		&models.StoreSetting{},
 	)
+	if err != nil {
+		return err
+	}
+
+	// AutoMigrate never relaxes NOT NULL, so columns that became optional are
+	// fixed here for databases created by older versions. Each statement is a
+	// no-op when already applied.
+	for _, stmt := range []string{
+		// Kasbon usage and reversals are not tied to a payment row.
+		`ALTER TABLE credit_payments ALTER COLUMN payment_id DROP NOT NULL`,
+	} {
+		if err := db.Exec(stmt).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -11,7 +11,28 @@ import (
 	"gorm.io/gorm"
 )
 
-const storeSettingID = 1
+const (
+	storeSettingID         = 1
+	defaultFreeShippingMin = 300000
+)
+
+// freeShippingMin returns the goods total from which delivery is free, or 0
+// when free shipping is off.
+func freeShippingMin(db *gorm.DB) float64 {
+	var setting models.StoreSetting
+	if err := db.Select("free_shipping_min").Where("id = ?", storeSettingID).First(&setting).Error; err != nil {
+		return defaultFreeShippingMin
+	}
+	return setting.FreeShippingMin
+}
+
+// applyFreeShipping drops the fee when the goods total qualifies.
+func applyFreeShipping(fee, goodsTotal, threshold float64) float64 {
+	if threshold > 0 && goodsTotal >= threshold {
+		return 0
+	}
+	return fee
+}
 
 type StoreService interface {
 	Get(ctx context.Context) (*models.StoreSetting, error)
@@ -30,7 +51,7 @@ func NewStoreService(db *gorm.DB) StoreService {
 func (s *storeService) Get(ctx context.Context) (*models.StoreSetting, error) {
 	setting := models.StoreSetting{ID: storeSettingID}
 	err := s.db.WithContext(ctx).
-		Attrs(models.StoreSetting{Name: "Lucky Mart", Tagline: "Toko sembako keluarga, grosir & eceran", ReceiptNote: "Terima kasih sudah berbelanja!"}).
+		Attrs(models.StoreSetting{Name: "Lucky Mart", Tagline: "Toko sembako keluarga, grosir & eceran", ReceiptNote: "Terima kasih sudah berbelanja!", FreeShippingMin: defaultFreeShippingMin}).
 		FirstOrCreate(&setting, models.StoreSetting{ID: storeSettingID}).Error
 	if err != nil {
 		return nil, err
@@ -60,6 +81,9 @@ func (s *storeService) Update(ctx context.Context, req dto.UpdateStoreSettingDTO
 	setting.MapsURL = maps
 	setting.ReceiptNote = strings.TrimSpace(req.ReceiptNote)
 	setting.Announcement = strings.TrimSpace(req.Announcement)
+	if req.FreeShippingMin != nil {
+		setting.FreeShippingMin = *req.FreeShippingMin
+	}
 	if err := s.db.WithContext(ctx).Save(setting).Error; err != nil {
 		return nil, err
 	}

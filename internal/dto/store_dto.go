@@ -11,4 +11,6 @@ type UpdateStoreSettingDTO struct {
 	MapsURL      string `json:"maps_url" binding:"max=500"`
 	ReceiptNote  string `json:"receipt_note" binding:"max=255"`
 	Announcement string `json:"announcement" binding:"max=255"`
+	// Free shipping from this goods total; 0 turns it off, nil keeps it.
+	FreeShippingMin *float64 `json:"free_shipping_min" binding:"omitempty,min=0"`
 }

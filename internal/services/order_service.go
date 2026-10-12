@@ -258,6 +258,7 @@ func (s *orderService) CreateOrder(ctx context.Context, userID uuid.UUID, userRo
 			})
 		}
 
+		shippingFee = applyFreeShipping(shippingFee, totalAmount, freeShippingMin(tx))
 		grandTotal = totalAmount + shippingFee
 
 		status := constants.OrderStatusConfirmed

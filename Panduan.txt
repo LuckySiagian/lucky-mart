@@ -24,6 +24,12 @@ Buka **3 Tab Terminal** di VS Code untuk masing-masing bagian:
    go run cmd/api/main.go
    ```
    *(Atau bisa menggunakan perintah singkat: `make run`)*
+3. **(Sekali saja, opsional) Isi data demo** — produk, pelanggan, pesanan, kasbon:
+   ```powershell
+   go run ./cmd/seed-demo
+   ```
+   Daftar akun demo & yang bisa dicoba ada di `docs/AKUN-DEMO.md`.
+   Jangan dijalankan di server production.
 
 ---
 

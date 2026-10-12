@@ -284,4 +284,5 @@ export interface StoreInfo {
   maps_url: string;
   receipt_note: string;
   announcement: string;
+  free_shipping_min: number;
 }

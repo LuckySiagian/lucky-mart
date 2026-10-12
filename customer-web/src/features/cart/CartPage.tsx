@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { AlertTriangle, ArrowRight, CheckSquare, Minus, Package, Plus, ShoppingBag, Square, Trash2 } from 'lucide-react';
 import { cartService } from '../../services/apiServices';
 import { useCartStore } from '../../store/useCartStore';
+import { useStoreInfo } from '../../hooks/useStoreInfo';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorState } from '../../components/common/ErrorState';
 import { formatCurrency, getErrorMessage } from '../../lib/utils';
@@ -43,6 +44,7 @@ export const CartPage: React.FC = () => {
 
   const selectedItems = items.filter((i) => selectedIds.includes(i.id));
   const selectedTotal = selectedItems.reduce((s, i) => s + i.subtotal, 0);
+  const freeMin = useStoreInfo()?.free_shipping_min ?? 0;
   const selectedQty = selectedItems.reduce((s, i) => s + i.quantity, 0);
   const blocked = selectedItems.some((i) => !i.is_product_active || !i.is_stock_sufficient);
 
@@ -144,7 +146,15 @@ export const CartPage: React.FC = () => {
             <div>
               <div className="text-xs text-slate-500">{selectedQty} barang dipilih</div>
               <div className="text-xl font-black text-slate-900 dark:text-white">{formatCurrency(selectedTotal)}</div>
-              <div className="hidden text-[11px] text-slate-400 lg:block">Ongkir dihitung di halaman checkout</div>
+              {freeMin > 0 ? (
+                <div className={`text-[11px] font-semibold ${selectedTotal >= freeMin ? 'text-primary-600' : 'text-slate-500'}`}>
+                  {selectedTotal >= freeMin
+                    ? 'Gratis ongkir untuk pesanan ini!'
+                    : `Belanja ${formatCurrency(freeMin - selectedTotal)} lagi untuk gratis ongkir`}
+                </div>
+              ) : (
+                <div className="hidden text-[11px] text-slate-400 lg:block">Ongkir dihitung di halaman checkout</div>
+              )}
             </div>
             <button
               disabled={selectedIds.length === 0 || blocked}

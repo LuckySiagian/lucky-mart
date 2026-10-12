@@ -281,6 +281,8 @@ func (s *cartService) GetCheckoutSummary(ctx context.Context, userID uuid.UUID, 
 			validationErrors = append(validationErrors, err.Error())
 		}
 	}
+	freeMin := freeShippingMin(s.db.WithContext(ctx))
+	shippingFee = applyFreeShipping(shippingFee, subtotal, freeMin)
 
 	return &dto.CheckoutSummaryDTO{
 		CartID:               cartRes.ID,
@@ -289,6 +291,7 @@ func (s *cartService) GetCheckoutSummary(ctx context.Context, userID uuid.UUID, 
 		SubtotalAmount:       subtotal,
 		ShippingMethodID:     methodID,
 		EstimatedShippingFee: shippingFee,
+		FreeShippingMin:      freeMin,
 		GrandTotalAmount:     subtotal + shippingFee,
 		Items:                items,
 		CanProceedToOrder:    canProceed,

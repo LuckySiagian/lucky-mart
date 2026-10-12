@@ -58,6 +58,7 @@ type CheckoutSummaryDTO struct {
 	SubtotalAmount       float64               `json:"subtotal_amount"`
 	ShippingMethodID     *uuid.UUID            `json:"shipping_method_id,omitempty"`
 	EstimatedShippingFee float64               `json:"estimated_shipping_fee"`
+	FreeShippingMin      float64               `json:"free_shipping_min"` // 0 = no free shipping
 	GrandTotalAmount     float64               `json:"grand_total_amount"`
 	Items                []CartItemResponseDTO `json:"items"`
 	CanProceedToOrder    bool                  `json:"can_proceed_to_order"`

@@ -12,7 +12,7 @@ import type { PaymentMethod, ShippingMethod, StoreInfo } from '../../types';
 
 type Tab = 'store' | 'profile' | 'password' | 'payment' | 'shipping';
 
-const STORE_FIELDS: { key: keyof StoreInfo; label: string; placeholder: string; hint?: string; multiline?: boolean }[] = [
+const STORE_FIELDS: { key: Exclude<keyof StoreInfo, 'free_shipping_min'>; label: string; placeholder: string; hint?: string; multiline?: boolean }[] = [
   { key: 'name', label: 'Nama toko', placeholder: 'Lucky Mart' },
   { key: 'tagline', label: 'Slogan singkat', placeholder: 'Toko sembako keluarga, grosir & eceran' },
   { key: 'address', label: 'Alamat toko', placeholder: 'Jl. ..., Kel. ..., Kec. ...', hint: 'Ditampilkan untuk pelanggan yang ambil sendiri di toko.', multiline: true },
@@ -125,6 +125,16 @@ export const SettingsPage: React.FC = () => {
                   )}
                 </Field>
               ))}
+              <Field label="Gratis ongkir untuk belanja minimal (Rp)" hint="Isi 0 kalau tidak ada gratis ongkir. Tidak termasuk ongkir, dihitung dari total belanja barang.">
+                <input
+                  type="number"
+                  min={0}
+                  step={10000}
+                  className={inputClass}
+                  value={store.free_shipping_min}
+                  onChange={(e) => setStore({ ...store, free_shipping_min: Math.max(0, Number(e.target.value) || 0) })}
+                />
+              </Field>
               <div>
                 <button className={btnPrimary} disabled={busy} onClick={saveStore}>Simpan Info Toko</button>
               </div>

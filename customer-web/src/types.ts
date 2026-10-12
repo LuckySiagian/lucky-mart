@@ -97,6 +97,7 @@ export interface CheckoutSummary {
   subtotal_amount: number;
   shipping_method_id?: string;
   estimated_shipping_fee: number;
+  free_shipping_min: number;
   grand_total_amount: number;
   items: CartItem[];
   can_proceed_to_order: boolean;
@@ -205,4 +206,5 @@ export interface StoreInfo {
   maps_url: string;
   receipt_note: string;
   announcement: string;
+  free_shipping_min: number;
 }

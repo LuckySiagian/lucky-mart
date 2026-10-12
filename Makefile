@@ -1,4 +1,4 @@
-.PHONY: run build test lint swagger docker-up docker-down clean help
+.PHONY: run seed-demo build test lint swagger docker-up docker-down clean help
 
 # Default target
 .DEFAULT_GOAL := help
@@ -10,6 +10,10 @@ MAIN_PATH=./cmd/api
 run:
 	@echo "Starting application..."
 	@go run $(MAIN_PATH)/main.go
+
+## seed-demo: Fill a development database with demo data (see docs/AKUN-DEMO.md)
+seed-demo:
+	@go run ./cmd/seed-demo
 
 ## build: Build application binary
 build:
